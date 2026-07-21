@@ -27,10 +27,19 @@ class DashboardConfig(BaseModel):
     port: int = 8000
 
 
+class CameraConfig(BaseModel):
+    id: str
+    name: str
+    rtsp_url: str  # keep this only in config/dragonfly.yaml (gitignored) — it carries credentials
+    poll_interval_s: float = 15.0
+    timeout_s: float = 3.0
+
+
 class HubConfig(BaseModel):
     mqtt: MqttConfig = MqttConfig()
     storage: StorageConfig = StorageConfig()
     dashboard: DashboardConfig = DashboardConfig()
+    cameras: list[CameraConfig] = []
 
 
 def load_config(path: str | Path = "config/dragonfly.yaml") -> HubConfig:

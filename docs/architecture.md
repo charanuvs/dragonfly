@@ -49,10 +49,15 @@ Everything that isn't the hub. All modules implement the same interface
 per device type: `module_id`, `module_type`, `start()`, `stop()`, and a
 callback that publishes readings onto the event bus.
 
-- **`modules/camera/`** — capture + local recording to the external HDD.
-  Motion-triggered or continuous, retention policy configurable. This is the
-  first module being built out; everything else (temperature, door/window,
-  motion, water leak, etc.) follows the same pattern.
+- **`modules/camera/`** — camera modules. The first one, **`rtsp_camera.py`**,
+  covers the Outdoor West (`OW`) camera: an RTSP/ONVIF network camera, so the
+  hub can't wire it directly like a Pi Camera Module. It's monitored with a
+  lightweight heartbeat — a background thread does a plain TCP connect to the
+  camera's RTSP port on an interval (`poll_interval_s` in config) and
+  publishes `{online, type, ts}` to `dragonfly/<id>/heartbeat`. This is
+  intentionally the smallest useful slice ("is OW reachable right now?")
+  before building actual stream pulling/recording (`recorder.py`, still a
+  stub) on top of it.
 - Future sensor types are added as new subpackages under `modules/`, each a
   small driver that reads hardware and calls `publish()`.
 
@@ -63,10 +68,19 @@ way it looks the same to the hub service.
 
 ### Dashboard (`src/dragonfly/dashboard/`)
 
-A FastAPI app serving a status page and live views (camera snapshots/streams,
-sensor readings, recording history). Binds only to the Pi's LAN-reachable
-interface — never to the isolated sensor interface, never to a
+A FastAPI app serving a status page (heartbeat/online-offline per module
+today; live views — camera snapshots/streams, sensor readings, recording
+history — as those modules are built out). Binds only to the Pi's
+LAN-reachable interface — never to the isolated sensor interface, never to a
 tailscale/public interface without deliberately deciding to do so later.
+
+`hub/main.py` runs the dashboard in the same process as the hub service
+(uvicorn, alongside the MQTT event loop in a background thread) so both share
+one in-memory `DeviceRegistry` with no extra IPC — the dashboard's
+`/api/modules` endpoint just reads `app.state.registry` directly. This is
+the simplest thing that works for a single-hub deployment; if the dashboard
+ever needs to run as a separate process, that state moves to the SQLite
+database described below instead.
 
 ### Storage
 

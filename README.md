@@ -49,8 +49,10 @@ dragonfly/
 
 ## Status
 
-Early scaffold. Interfaces and structure are in place; sensor/camera drivers
-and the dashboard UI are stubs to be filled in next.
+Early scaffold, with one module working end-to-end: **OW** (Outdoor West,
+an RTSP/ONVIF camera) is monitored via a TCP-connect heartbeat, and the
+dashboard shows it live at `http://<pi-lan-ip>:8000`. Actual video
+capture/recording is still a stub. Other sensor types are yet to come.
 
 ## Setup (Mac, for development)
 

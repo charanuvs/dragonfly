@@ -14,7 +14,7 @@ home network.
 
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up --ssh --hostname=dragonfly-hub
+sudo tailscale up --ssh --hostname=phila
 ```
 
 `--ssh` turns on Tailscale SSH, so you don't need to separately manage SSH
@@ -27,12 +27,11 @@ keys — access is controlled by your Tailscale account/ACLs.
 2. Confirm you can reach it:
 
    ```bash
-   tailscale ping dragonfly-hub
-   ssh pi@dragonfly-hub
+   tailscale ping phila
+   ssh pi@phila
    ```
 
-MagicDNS (on by default) means `dragonfly-hub` resolves without remembering
-an IP.
+MagicDNS (on by default) means `phila` resolves without remembering an IP.
 
 ### On the Pi: install the project
 
@@ -65,7 +64,7 @@ HDD, and installs+enables the systemd service
    bash deploy/deploy.sh
    ```
 
-   This runs `ssh pi@dragonfly-hub` and, on the Pi: `git pull`,
+   This runs `ssh pi@phila` and, on the Pi: `git pull`,
    `pip install -e ".[camera]"` (picks up new dependencies), and
    `sudo systemctl restart dragonfly-hub`. It then tails the service log for
    a few seconds so you can see the new version came up cleanly.
@@ -76,12 +75,12 @@ the Mac is the whole workflow.
 ## Rollback
 
 ```bash
-ssh pi@dragonfly-hub "cd ~/dragonfly && git log --oneline -5"
-ssh pi@dragonfly-hub "cd ~/dragonfly && git checkout <commit> && sudo systemctl restart dragonfly-hub"
+ssh pi@phila "cd ~/dragonfly && git log --oneline -5"
+ssh pi@phila "cd ~/dragonfly && git checkout <commit> && sudo systemctl restart dragonfly-hub"
 ```
 
 ## Logs / debugging
 
 ```bash
-ssh pi@dragonfly-hub "journalctl -u dragonfly-hub -f"
+ssh pi@phila "journalctl -u dragonfly-hub -f"
 ```

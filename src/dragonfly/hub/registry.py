@@ -21,8 +21,10 @@ class DeviceRegistry:
     def __init__(self) -> None:
         self._modules: dict[str, ModuleStatus] = {}
 
-    def touch(self, module_id: str, module_type: str) -> None:
-        self._modules[module_id] = ModuleStatus(module_id=module_id, module_type=module_type)
+    def touch(self, module_id: str, module_type: str, online: bool = True) -> None:
+        self._modules[module_id] = ModuleStatus(
+            module_id=module_id, module_type=module_type, online=online
+        )
 
     def all(self) -> list[ModuleStatus]:
         return list(self._modules.values())

@@ -18,13 +18,23 @@ class EventBus:
     def __init__(self, host: str = "localhost", port: int = 1883) -> None:
         self._host = host
         self._port = port
-        self._client = mqtt.Client()
+        # paho-mqtt 2.x requires an explicit callback API version; VERSION2 is
+        # the current (non-deprecated) one and doesn't change our on_message
+        # signature (client, userdata, msg) from VERSION1.
+        self._client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+        self._client.on_connect = self._on_connect
         self._client.on_message = self._on_message
         self._handlers: list[Callable[[str, bytes], Any]] = []
 
     def connect(self) -> None:
         self._client.connect(self._host, self._port)
-        self._client.subscribe(f"{TOPIC_PREFIX}/#")
+
+    def _on_connect(
+        self, client: mqtt.Client, _userdata: Any, _flags: Any, _reason_code: Any, _properties: Any = None
+    ) -> None:
+        # Subscribing here (rather than right after connect()) means we
+        # automatically re-subscribe after any reconnect, not just the first one.
+        client.subscribe(f"{TOPIC_PREFIX}/#")
 
     def on_event(self, handler: Callable[[str, bytes], Any]) -> None:
         """Register a callback invoked as handler(topic, payload) for every message."""
@@ -35,6 +45,13 @@ class EventBus:
 
     def loop_forever(self) -> None:
         self._client.loop_forever()
+
+    def loop_start(self) -> None:
+        """Run the network loop in a background thread (non-blocking)."""
+        self._client.loop_start()
+
+    def loop_stop(self) -> None:
+        self._client.loop_stop()
 
     def _on_message(self, _client: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
         for handler in self._handlers:

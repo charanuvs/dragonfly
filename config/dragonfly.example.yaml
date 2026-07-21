@@ -13,3 +13,12 @@ dashboard:
   bind_host: 0.0.0.0   # fine to leave as-is; the Pi's IoT-network interface
                         # never gets a route to the dashboard anyway (see docs/network.md)
   port: 8000
+
+cameras:
+  - id: OW
+    name: "Outdoor West"
+    # RTSP/ONVIF stream URL, credentials included — this file is gitignored,
+    # never commit the real one.
+    rtsp_url: "rtsp://<user>:<password>@<camera-ip>:554/stream1"
+    poll_interval_s: 15
+    timeout_s: 3

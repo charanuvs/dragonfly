@@ -3,7 +3,7 @@
 # Pi over Tailscale and restarts the service.
 set -euo pipefail
 
-HOST="${DRAGONFLY_HOST:-pi@dragonfly-hub}"
+HOST="${DRAGONFLY_HOST:-pi@phila}"
 
 echo "== Deploying to $HOST =="
 ssh "$HOST" bash -s <<'EOF'
