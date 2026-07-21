@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.env
+*.log
+
+# Local, per-deployment config and secrets — never commit these
+config/dragonfly.yaml
+config/secrets.yaml
+*.pem
+*.key
+
+# Recordings / captured media / local data
+data/
+recordings/
+*.mp4
+*.h264
+*.jpg
+*.png
+!docs/**/*.png
+
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,7 @@
+# Prefer `pip install -e .` (see pyproject.toml). This file is kept for
+# environments/tools that expect a plain requirements.txt.
+fastapi>=0.111
+uvicorn[standard]>=0.30
+paho-mqtt>=2.1
+pydantic>=2.7
+pyyaml>=6.0

@@ -1,0 +1,15 @@
+# Copy this to config/dragonfly.yaml on the Pi and adjust for your setup.
+# config/dragonfly.yaml is gitignored — never commit the real one.
+
+mqtt:
+  host: localhost
+  port: 1883
+
+storage:
+  recordings_path: /mnt/dragonfly-hdd/recordings
+  database_path: /mnt/dragonfly-hdd/dragonfly.db
+
+dashboard:
+  bind_host: 0.0.0.0   # fine to leave as-is; the Pi's IoT-network interface
+                        # never gets a route to the dashboard anyway (see docs/network.md)
+  port: 8000
