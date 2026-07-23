@@ -28,7 +28,7 @@ keys — access is controlled by your Tailscale account/ACLs.
 
    ```bash
    tailscale ping phila
-   ssh pi@phila
+   ssh charan@phila
    ```
 
 MagicDNS (on by default) means `phila` resolves without remembering an IP.
@@ -64,7 +64,7 @@ HDD, and installs+enables the systemd service
    bash deploy/deploy.sh
    ```
 
-   This runs `ssh pi@phila` and, on the Pi: `git pull`,
+   This runs `ssh charan@phila` and, on the Pi: `git pull`,
    `pip install -e ".[camera]"` (picks up new dependencies), and
    `sudo systemctl restart dragonfly-hub`. It then tails the service log for
    a few seconds so you can see the new version came up cleanly.
@@ -75,12 +75,12 @@ the Mac is the whole workflow.
 ## Rollback
 
 ```bash
-ssh pi@phila "cd ~/dragonfly && git log --oneline -5"
-ssh pi@phila "cd ~/dragonfly && git checkout <commit> && sudo systemctl restart dragonfly-hub"
+ssh charan@phila "cd ~/dragonfly && git log --oneline -5"
+ssh charan@phila "cd ~/dragonfly && git checkout <commit> && sudo systemctl restart dragonfly-hub"
 ```
 
 ## Logs / debugging
 
 ```bash
-ssh pi@phila "journalctl -u dragonfly-hub -f"
+ssh charan@phila "journalctl -u dragonfly-hub -f"
 ```

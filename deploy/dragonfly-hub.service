@@ -5,9 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/dragonfly
-ExecStart=/home/pi/dragonfly/.venv/bin/dragonfly-hub
+User=charan
+WorkingDirectory=/home/charan/dragonfly
+ExecStart=/home/charan/dragonfly/.venv/bin/dragonfly-hub
 Restart=on-failure
 RestartSec=5
 
