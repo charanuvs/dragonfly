@@ -84,6 +84,17 @@ the simplest thing that works for a single-hub deployment; if the dashboard
 ever needs to run as a separate process, that state moves to the SQLite
 database described below instead.
 
+**Live view** (`dashboard/live.py`, `/live/<camera-id>`) is a third, separate
+way the hub touches a camera besides the heartbeat and the recorder: an
+on-demand `ffmpeg` process remuxes (not re-encodes — `-c:v copy`, cheap on
+CPU) the camera's main/HD stream into short HLS segments, served to a
+browser via `hls.js`. It only starts when someone opens the live page and
+auto-stops after ~60s with no viewers, because unlike the always-on
+heartbeat/recorder, a third concurrent connection to the camera is the one
+most likely to bump into a cheap camera's connection limit — see the caveat
+in `docs/recording.md`/README if live view and a recording cutover overlap
+and one fails.
+
 ### Storage
 
 The external HDD is mounted on the Pi and holds:

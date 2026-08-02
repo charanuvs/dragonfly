@@ -14,6 +14,7 @@ import logging
 import uvicorn
 
 from dragonfly.dashboard.app import app as dashboard_app
+from dragonfly.dashboard.live import LiveStreamManager
 from dragonfly.hub.config import load_config
 from dragonfly.hub.eventbus import EventBus
 from dragonfly.hub.registry import DeviceRegistry
@@ -94,10 +95,16 @@ def run() -> None:
             log.exception("failed to start recorder %s — continuing without it", rec.module_id)
     recorders = started_recorders
 
+    # Live view uses each camera's main (HD) stream, on-demand only — see
+    # dashboard/live.py for why it isn't always-on like the recorder/heartbeat.
+    live_manager = LiveStreamManager({cam.id: cam.rtsp_url for cam in config.cameras})
+    live_manager.start_reaper()
+
     # Hand the shared registry + camera metadata to the dashboard before it
     # starts serving requests.
     dashboard_app.state.registry = registry
     dashboard_app.state.camera_config = {cam.id: cam for cam in config.cameras}
+    dashboard_app.state.live_manager = live_manager
 
     log.info(
         "dragonfly-hub starting up on %s:%d (%d camera module(s), %d recorder(s))",
@@ -113,6 +120,7 @@ def run() -> None:
             mod.stop()
         for rec in recorders:
             rec.stop()
+        live_manager.stop_all()
         bus.loop_stop()
 
 
