@@ -1,7 +1,12 @@
 [Unit]
 Description=Dragonfly hub service
-After=network-online.target mosquitto.service
+After=network-online.target mosquitto.service mnt-dragonfly\x2dhdd.mount
 Wants=network-online.target
+# Refuse to start until the recordings drive is actually mounted here — this
+# only has an effect if /mnt/dragonfly-hdd has a real fstab entry (see
+# docs/recording.md); systemd derives the mnt-dragonfly\x2dhdd.mount unit
+# above from that entry automatically.
+RequiresMountsFor=/mnt/dragonfly-hdd
 
 [Service]
 Type=simple

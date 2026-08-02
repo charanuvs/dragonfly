@@ -68,6 +68,26 @@ noticeably better quality matters, the practical fix isn't a cleverer
 encoding setting, it's a bigger drive — a 128GB–1TB USB SSD is cheap and
 buys weeks-to-months of retention at bitrates that actually look good.
 
+## Making the drive survive reboots
+
+`dragonfly-hub.service` has `RequiresMountsFor=/mnt/dragonfly-hdd`, so
+systemd won't start the hub until that path is actually mounted — but that
+only works if it's a real mount, backed by an `/etc/fstab` entry, not just a
+one-off `mount` command. Set that up once:
+
+```bash
+lsblk                          # find the device, e.g. /dev/sda1
+sudo blkid /dev/sda1           # get its UUID
+sudo mkdir -p /mnt/dragonfly-hdd
+sudo nano /etc/fstab
+# add a line (adjust filesystem type — ext4/vfat/exfat — to match the drive):
+#   UUID=<uuid-from-blkid>  /mnt/dragonfly-hdd  ext4  defaults,nofail  0  2
+sudo mount -a                  # mounts it now and validates the fstab line
+```
+
+`nofail` matters: without it, a missing/failed drive can hang the Pi's boot
+entirely waiting for a mount that'll never come.
+
 All of this is configurable per-camera in `config/dragonfly.yaml`
 (`fps`, `bitrate_kbps`, `segment_seconds`, `overlap_seconds`,
 `retention_days`) — adjust to trade off quality vs. retention as your
