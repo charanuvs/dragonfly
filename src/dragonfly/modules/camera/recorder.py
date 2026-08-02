@@ -131,7 +131,7 @@ class SegmentedRecorder(SensorModule):
         path.parent.mkdir(parents=True, exist_ok=True)
         cmd = [
             "ffmpeg", "-nostdin", "-y", "-loglevel", "warning",
-            "-rtsp_transport", "tcp", "-stimeout", "15000000",
+            "-rtsp_transport", "tcp", "-timeout", "15000000",
             "-i", self.rtsp_url,
             "-t", str(max(1, round(duration))),
             "-vf", f"fps={self.fps}",
