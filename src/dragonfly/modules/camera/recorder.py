@@ -120,7 +120,7 @@ class SegmentedRecorder(SensorModule):
         duration = self.segment_seconds + self.overlap_seconds
         cmd = [
             "ffmpeg", "-nostdin", "-y", "-loglevel", "warning",
-            "-rtsp_transport", "tcp", "-rw_timeout", "15000000",
+            "-rtsp_transport", "tcp", "-stimeout", "15000000",
             "-i", self.rtsp_url,
             "-t", str(duration),
             "-vf", f"fps={self.fps}",
