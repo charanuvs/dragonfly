@@ -103,26 +103,37 @@ class SegmentedRecorder(SensorModule):
     # -- recording --
 
     def _record_loop(self) -> None:
+        # Epoch-aligned boundaries line up with wall-clock 5-minute marks in
+        # any real-world timezone (all UTC offsets are multiples of 5 min).
+        now = time.time()
+        boundary = int(now // self.segment_seconds) * self.segment_seconds
+
+        # Start recording immediately rather than waiting (up to
+        # segment_seconds) for the next aligned mark — matters for how
+        # quickly recording resumes after a restart/crash, not just for
+        # testing. This first segment just runs shorter, ending at the same
+        # aligned point every segment after it uses.
+        first_end = boundary + self.segment_seconds + self.overlap_seconds
+        self._launch_segment(boundary, duration=max(1, first_end - now))
+        self._reap_finished()
+
         while not self._stop.is_set():
+            boundary += self.segment_seconds
             now = time.time()
-            # Epoch-aligned boundaries line up with wall-clock 5-minute marks
-            # in any real-world timezone (all UTC offsets are multiples of 5 min).
-            next_boundary = (int(now // self.segment_seconds) + 1) * self.segment_seconds
-            if self._stop.wait(next_boundary - now):
+            if self._stop.wait(boundary - now):
                 break
-            self._launch_segment(next_boundary)
+            self._launch_segment(boundary, duration=self.segment_seconds + self.overlap_seconds)
             self._reap_finished()
 
-    def _launch_segment(self, boundary_epoch: float) -> None:
+    def _launch_segment(self, boundary_epoch: float, duration: float) -> None:
         dt = datetime.fromtimestamp(boundary_epoch).astimezone()
         path = compute_segment_path(dt, self.root, self.segment_seconds)
         path.parent.mkdir(parents=True, exist_ok=True)
-        duration = self.segment_seconds + self.overlap_seconds
         cmd = [
             "ffmpeg", "-nostdin", "-y", "-loglevel", "warning",
             "-rtsp_transport", "tcp", "-stimeout", "15000000",
             "-i", self.rtsp_url,
-            "-t", str(duration),
+            "-t", str(max(1, round(duration))),
             "-vf", f"fps={self.fps}",
             "-c:v", "libx264", "-preset", "veryfast",
             "-b:v", f"{self.bitrate_kbps}k",
