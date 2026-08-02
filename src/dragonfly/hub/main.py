@@ -105,6 +105,7 @@ def run() -> None:
     dashboard_app.state.registry = registry
     dashboard_app.state.camera_config = {cam.id: cam for cam in config.cameras}
     dashboard_app.state.live_manager = live_manager
+    dashboard_app.state.storage_path = config.storage.recordings_path
 
     log.info(
         "dragonfly-hub starting up on %s:%d (%d camera module(s), %d recorder(s))",

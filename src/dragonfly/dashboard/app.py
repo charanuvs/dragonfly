@@ -18,13 +18,16 @@ import time
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
 
+from dragonfly.hub.sysinfo import get_system_stats
+
 app = FastAPI(title="Dragonfly")
 
-# Set by hub/main.py at startup. Left as None/{} so the app still imports
+# Set by hub/main.py at startup. Left as None/{}/"." so the app still imports
 # (and /health works) if run standalone.
 app.state.registry = None
 app.state.camera_config = {}
 app.state.live_manager = None
+app.state.storage_path = "/"
 
 
 @app.get("/health")
@@ -54,6 +57,11 @@ def list_modules(request: Request) -> list[dict]:
             }
         )
     return modules
+
+
+@app.get("/api/system")
+def system_stats(request: Request) -> dict:
+    return get_system_stats(request.app.state.storage_path)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -112,12 +120,41 @@ _INDEX_HTML = """<!doctype html>
     .dot.offline { background: #e74c3c; box-shadow: 0 0 6px #e74c3c; }
     .meta { color: #888; font-size: .8rem; margin-top: .4rem; }
     .empty { color: #888; }
+    .sysbar {
+      display: flex; flex-wrap: wrap; gap: 1.5rem; align-items: center;
+      background: #1a1a1a; border: 1px solid #333; border-radius: 10px;
+      padding: .6rem 1.25rem; margin-bottom: 1.25rem; font-size: .85rem; color: #ccc;
+    }
+    .sysbar b { color: #eee; }
   </style>
 </head>
 <body>
   <h1>Dragonfly</h1>
+  <div id="sysbar" class="sysbar">Loading system stats&hellip;</div>
   <div id="grid" class="grid"><p class="empty">Loading...</p></div>
   <script>
+    function formatUptime(s) {
+      const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
+      return d > 0 ? `${d}d ${h}h` : `${h}h`;
+    }
+    async function refreshSystem() {
+      const res = await fetch('/api/system');
+      const s = await res.json();
+      const mb = b => (b / 1e6).toFixed(0);
+      const gb = b => (b / 1e9).toFixed(1);
+      const disk = s.disk_ok
+        ? `Disk <b>${gb(s.disk_used)}/${gb(s.disk_total)} GB</b> (${s.disk_percent}%)`
+        : `Disk <b>not mounted</b> (${s.disk_path})`;
+      document.getElementById('sysbar').innerHTML =
+        `<span><b>${s.hostname}</b></span>` +
+        `<span>CPU <b>${s.cpu_percent.toFixed(0)}%</b> (${s.cpu_count} cores)</span>` +
+        `<span>Mem <b>${mb(s.mem_used)}/${mb(s.mem_total)} MB</b> (${s.mem_percent.toFixed(0)}%)</span>` +
+        `<span>${disk}</span>` +
+        `<span>up ${formatUptime(s.uptime_s)}</span>`;
+    }
+    refreshSystem();
+    setInterval(refreshSystem, 5000);
+
     async function refresh() {
       const res = await fetch('/api/modules');
       const modules = await res.json();
