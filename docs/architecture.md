@@ -55,9 +55,11 @@ callback that publishes readings onto the event bus.
   lightweight heartbeat — a background thread does a plain TCP connect to the
   camera's RTSP port on an interval (`poll_interval_s` in config) and
   publishes `{online, type, ts}` to `dragonfly/<id>/heartbeat`. This is
-  intentionally the smallest useful slice ("is OW reachable right now?")
-  before building actual stream pulling/recording (`recorder.py`, still a
-  stub) on top of it.
+  intentionally the smallest useful slice ("is OW reachable right now?").
+  Actual recording is a separate, opt-in (`record: true`) module,
+  **`recorder.py`**: an ffmpeg-based segmented recorder with gapless cutover
+  and date-based retention cleanup — see [`recording.md`](recording.md) for
+  the full design and the storage math behind its defaults.
 - Future sensor types are added as new subpackages under `modules/`, each a
   small driver that reads hardware and calls `publish()`.
 

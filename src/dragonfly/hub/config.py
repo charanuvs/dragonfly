@@ -34,6 +34,18 @@ class CameraConfig(BaseModel):
     poll_interval_s: float = 15.0
     timeout_s: float = 3.0
 
+    # Recording (opt-in per camera; see docs/recording.md for the storage math
+    # behind these defaults).
+    record: bool = False
+    # Point this at a lower-res substream if your camera exposes one, to save
+    # storage — defaults to rtsp_url (the same stream used for heartbeat) if unset.
+    recording_rtsp_url: str | None = None
+    fps: int = 10
+    bitrate_kbps: int = 200
+    segment_seconds: int = 300
+    overlap_seconds: int = 10
+    retention_days: int = 3
+
 
 class HubConfig(BaseModel):
     mqtt: MqttConfig = MqttConfig()

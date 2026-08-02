@@ -32,6 +32,7 @@ See `docs/` for the full design:
 - [`docs/architecture.md`](docs/architecture.md) — software architecture
 - [`docs/network.md`](docs/network.md) — network topology and isolation setup
 - [`docs/deployment.md`](docs/deployment.md) — Tailscale + remote deploy workflow
+- [`docs/recording.md`](docs/recording.md) — video recording design + storage math
 
 ## Project layout
 
@@ -49,10 +50,12 @@ dragonfly/
 
 ## Status
 
-Early scaffold, with one module working end-to-end: **OW** (Outdoor West,
-an RTSP/ONVIF camera) is monitored via a TCP-connect heartbeat, and the
-dashboard shows it live at `http://<pi-lan-ip>:8000`. Actual video
-capture/recording is still a stub. Other sensor types are yet to come.
+**OW** (Outdoor West, an RTSP/ONVIF camera) is monitored via a TCP-connect
+heartbeat visible live on the dashboard (`http://<pi-lan-ip>:8000`), and
+records continuously in gapless 5-minute segments to the external drive
+(see [`docs/recording.md`](docs/recording.md) for the retention/storage
+tradeoffs — an 8GB drive only holds a few days at usable quality). Other
+sensor types are yet to come.
 
 ## Setup (Mac, for development)
 

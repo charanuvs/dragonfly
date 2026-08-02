@@ -22,3 +22,14 @@ cameras:
     rtsp_url: "rtsp://<user>:<password>@<camera-ip>:554/stream1"
     poll_interval_s: 15
     timeout_s: 3
+
+    # Recording — see docs/recording.md for the storage math behind these
+    # numbers. Tuned for an 8GB USB drive: ~200kbps -> ~2.2GB/day -> ~3 days
+    # of retention. Raise bitrate for better quality if you attach bigger
+    # storage; lower retention_days if you go the other way.
+    record: true
+    fps: 10
+    bitrate_kbps: 200
+    segment_seconds: 300
+    overlap_seconds: 10
+    retention_days: 3

@@ -8,7 +8,7 @@ cd "$REPO_DIR"
 
 echo "== Installing system packages =="
 sudo apt-get update
-sudo apt-get install -y python3-venv mosquitto mosquitto-clients
+sudo apt-get install -y python3-venv mosquitto mosquitto-clients ffmpeg
 
 echo "== Creating virtualenv =="
 python3 -m venv .venv

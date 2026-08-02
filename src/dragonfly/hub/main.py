@@ -17,6 +17,7 @@ from dragonfly.dashboard.app import app as dashboard_app
 from dragonfly.hub.config import load_config
 from dragonfly.hub.eventbus import EventBus
 from dragonfly.hub.registry import DeviceRegistry
+from dragonfly.modules.camera.recorder import SegmentedRecorder
 from dragonfly.modules.camera.rtsp_camera import RtspCameraModule
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -64,22 +65,43 @@ def run() -> None:
     for mod in camera_modules:
         mod.start()
 
+    recorders = [
+        SegmentedRecorder(
+            module_id=cam.id,
+            bus=bus,
+            rtsp_url=cam.recording_rtsp_url or cam.rtsp_url,
+            recordings_root=config.storage.recordings_path,
+            fps=cam.fps,
+            bitrate_kbps=cam.bitrate_kbps,
+            segment_seconds=cam.segment_seconds,
+            overlap_seconds=cam.overlap_seconds,
+            retention_days=cam.retention_days,
+        )
+        for cam in config.cameras
+        if cam.record
+    ]
+    for rec in recorders:
+        rec.start()
+
     # Hand the shared registry + camera metadata to the dashboard before it
     # starts serving requests.
     dashboard_app.state.registry = registry
     dashboard_app.state.camera_config = {cam.id: cam for cam in config.cameras}
 
     log.info(
-        "dragonfly-hub starting up on %s:%d (%d camera module(s))",
+        "dragonfly-hub starting up on %s:%d (%d camera module(s), %d recorder(s))",
         config.dashboard.bind_host,
         config.dashboard.port,
         len(camera_modules),
+        len(recorders),
     )
     try:
         uvicorn.run(dashboard_app, host=config.dashboard.bind_host, port=config.dashboard.port)
     finally:
         for mod in camera_modules:
             mod.stop()
+        for rec in recorders:
+            rec.stop()
         bus.loop_stop()
 
 
