@@ -63,7 +63,10 @@ def run() -> None:
         for cam in config.cameras
     ]
     for mod in camera_modules:
-        mod.start()
+        try:
+            mod.start()
+        except Exception:
+            log.exception("failed to start heartbeat module %s — continuing without it", mod.module_id)
 
     recorders = [
         SegmentedRecorder(
@@ -80,8 +83,16 @@ def run() -> None:
         for cam in config.cameras
         if cam.record
     ]
+    started_recorders = []
     for rec in recorders:
-        rec.start()
+        try:
+            rec.start()
+            started_recorders.append(rec)
+        except Exception:
+            # A missing ffmpeg binary or bad recordings path shouldn't take down
+            # the dashboard/heartbeat — log it and keep the rest of the hub alive.
+            log.exception("failed to start recorder %s — continuing without it", rec.module_id)
+    recorders = started_recorders
 
     # Hand the shared registry + camera metadata to the dashboard before it
     # starts serving requests.
