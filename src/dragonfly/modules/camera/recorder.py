@@ -140,7 +140,11 @@ class SegmentedRecorder(SensorModule):
             "-maxrate", f"{self.bitrate_kbps}k",
             "-bufsize", f"{self.bitrate_kbps * 2}k",
             "-an",
-            "-movflags", "+faststart",
+            # Fragmented MP4: writes valid, playable structure incrementally
+            # (moov up front, then moof/mdat fragments as they're recorded)
+            # instead of only finalizing the file when the segment completes —
+            # so a segment can be opened/scrubbed in VLC while still recording.
+            "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
             str(path),
         ]
         log.info("recording segment -> %s", path)
