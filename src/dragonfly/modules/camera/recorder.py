@@ -140,11 +140,14 @@ class SegmentedRecorder(SensorModule):
             "-maxrate", f"{self.bitrate_kbps}k",
             "-bufsize", f"{self.bitrate_kbps * 2}k",
             "-an",
-            # Fragmented MP4: writes valid, playable structure incrementally
-            # (moov up front, then moof/mdat fragments as they're recorded)
-            # instead of only finalizing the file when the segment completes —
-            # so a segment can be opened/scrubbed in VLC while still recording.
-            "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
+            # Regular (non-fragmented) MP4: finalizes duration/seek metadata
+            # properly once the segment completes, for reliable playback in
+            # QuickTime/VLC/everything. (Fragmented MP4 was tried briefly to
+            # allow scrubbing mid-recording, but it left files with no usable
+            # duration even after completing, and QuickTime often couldn't
+            # open them at all — not worth it given Live View already covers
+            # the "watch it right now" case.)
+            "-movflags", "+faststart",
             str(path),
         ]
         log.info("recording segment -> %s", path)
