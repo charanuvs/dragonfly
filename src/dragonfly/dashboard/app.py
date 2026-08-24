@@ -28,7 +28,6 @@ app.state.registry = None
 app.state.camera_config = {}
 app.state.live_manager = None
 app.state.storage_path = "/"
-app.state.stats_history = None
 
 
 @app.get("/health")
@@ -63,12 +62,6 @@ def list_modules(request: Request) -> list[dict]:
 @app.get("/api/system")
 def system_stats(request: Request) -> dict:
     return get_system_stats(request.app.state.storage_path)
-
-
-@app.get("/api/system/history")
-def system_history(request: Request) -> list[dict]:
-    history = request.app.state.stats_history
-    return history.all() if history else []
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -144,57 +137,48 @@ _INDEX_HTML = """<!doctype html>
   <h1>Dragonfly</h1>
   <div id="sysbar" class="sysbar">Loading system stats&hellip;</div>
   <div class="history-card">
-    <div class="name">CPU / memory &mdash; last 24h</div>
+    <div class="name">CPU / memory &mdash; live (since page opened)</div>
     <canvas id="historyChart" height="70"></canvas>
   </div>
   <div id="grid" class="grid"><p class="empty">Loading...</p></div>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js"></script>
   <script>
+    // Purely client-side: polls /api/system every second and accumulates
+    // points itself — nothing persisted on the Pi, resets whenever this page
+    // reloads. Capped to the last 5 minutes so a tab left open for hours
+    // doesn't grow without bound.
+    const MAX_POINTS = 300;
+    const liveData = { labels: [], cpu: [], mem: [] };
     let historyChart = null;
-    async function refreshHistory() {
-      const res = await fetch('/api/system/history');
-      const data = await res.json();
-      const labels = data.map(d => new Date(d.ts * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}));
-      const cpu = data.map(d => d.cpu_percent);
-      const mem = data.map(d => d.mem_percent);
-      if (!historyChart) {
-        const ctx = document.getElementById('historyChart').getContext('2d');
-        historyChart = new Chart(ctx, {
-          type: 'line',
-          data: {
-            labels,
-            datasets: [
-              { label: 'CPU %', data: cpu, borderColor: '#4da3ff', backgroundColor: 'transparent', tension: .2, pointRadius: 0, borderWidth: 1.5 },
-              { label: 'Mem %', data: mem, borderColor: '#2ecc71', backgroundColor: 'transparent', tension: .2, pointRadius: 0, borderWidth: 1.5 },
-            ],
+
+    function initChart() {
+      const ctx = document.getElementById('historyChart').getContext('2d');
+      historyChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: liveData.labels,
+          datasets: [
+            { label: 'CPU %', data: liveData.cpu, borderColor: '#4da3ff', backgroundColor: 'transparent', tension: .2, pointRadius: 0, borderWidth: 1.5 },
+            { label: 'Mem %', data: liveData.mem, borderColor: '#2ecc71', backgroundColor: 'transparent', tension: .2, pointRadius: 0, borderWidth: 1.5 },
+          ],
+        },
+        options: {
+          responsive: true,
+          animation: false,
+          scales: {
+            y: { min: 0, max: 100, ticks: { color: '#888' }, grid: { color: '#292929' } },
+            x: { ticks: { color: '#888', maxTicksLimit: 8 }, grid: { display: false } },
           },
-          options: {
-            responsive: true,
-            animation: false,
-            scales: {
-              y: { min: 0, max: 100, ticks: { color: '#888' }, grid: { color: '#292929' } },
-              x: { ticks: { color: '#888', maxTicksLimit: 8 }, grid: { display: false } },
-            },
-            plugins: { legend: { labels: { color: '#ccc' } } },
-          },
-        });
-      } else {
-        historyChart.data.labels = labels;
-        historyChart.data.datasets[0].data = cpu;
-        historyChart.data.datasets[1].data = mem;
-        historyChart.update('none');
-      }
+          plugins: { legend: { labels: { color: '#ccc' } } },
+        },
+      });
     }
-    refreshHistory();
-    setInterval(refreshHistory, 60000);
 
     function formatUptime(s) {
       const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
       return d > 0 ? `${d}d ${h}h` : `${h}h`;
     }
-    async function refreshSystem() {
-      const res = await fetch('/api/system');
-      const s = await res.json();
+    function renderSysbar(s) {
       const mb = b => (b / 1e6).toFixed(0);
       const gb = b => (b / 1e9).toFixed(1);
       const disk = s.disk_ok
@@ -207,8 +191,25 @@ _INDEX_HTML = """<!doctype html>
         `<span>${disk}</span>` +
         `<span>up ${formatUptime(s.uptime_s)}</span>`;
     }
-    refreshSystem();
-    setInterval(refreshSystem, 5000);
+
+    // Single 1s poll drives both the stats bar and the live chart — no point
+    // hitting /api/system from two separate timers.
+    async function tickSystem() {
+      const res = await fetch('/api/system');
+      const s = await res.json();
+      renderSysbar(s);
+
+      liveData.labels.push(new Date().toLocaleTimeString([], {hour12: false}));
+      liveData.cpu.push(s.cpu_percent);
+      liveData.mem.push(s.mem_percent);
+      if (liveData.labels.length > MAX_POINTS) {
+        liveData.labels.shift(); liveData.cpu.shift(); liveData.mem.shift();
+      }
+      if (!historyChart) initChart();
+      historyChart.update('none');
+    }
+    tickSystem();
+    setInterval(tickSystem, 1000);
 
     async function refresh() {
       const res = await fetch('/api/modules');

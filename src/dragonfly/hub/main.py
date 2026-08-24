@@ -17,7 +17,6 @@ from dragonfly.dashboard.app import app as dashboard_app
 from dragonfly.dashboard.live import LiveStreamManager
 from dragonfly.hub.config import load_config
 from dragonfly.hub.eventbus import EventBus
-from dragonfly.hub.history import SystemStatsHistory
 from dragonfly.hub.registry import DeviceRegistry
 from dragonfly.modules.camera.recorder import SegmentedRecorder
 from dragonfly.modules.camera.rtsp_camera import RtspCameraModule
@@ -101,16 +100,12 @@ def run() -> None:
     live_manager = LiveStreamManager({cam.id: cam.rtsp_url for cam in config.cameras})
     live_manager.start_reaper()
 
-    stats_history = SystemStatsHistory(disk_path=config.storage.recordings_path)
-    stats_history.start()
-
     # Hand the shared registry + camera metadata to the dashboard before it
     # starts serving requests.
     dashboard_app.state.registry = registry
     dashboard_app.state.camera_config = {cam.id: cam for cam in config.cameras}
     dashboard_app.state.live_manager = live_manager
     dashboard_app.state.storage_path = config.storage.recordings_path
-    dashboard_app.state.stats_history = stats_history
 
     log.info(
         "dragonfly-hub starting up on %s:%d (%d camera module(s), %d recorder(s))",
@@ -127,7 +122,6 @@ def run() -> None:
         for rec in recorders:
             rec.stop()
         live_manager.stop_all()
-        stats_history.stop()
         bus.loop_stop()
 
 
