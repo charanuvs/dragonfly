@@ -70,8 +70,8 @@ buys weeks-to-months of retention at bitrates that actually look good.
 
 ## Making the drive survive reboots
 
-`dragonfly-hub.service` has `RequiresMountsFor=/mnt/dragonfly-hdd`, so
-systemd won't start the hub until that path is actually mounted — but that
+`dragonfly-capture.service` has `RequiresMountsFor=/mnt/dragonfly-hdd`, so
+systemd won't start capture until that path is actually mounted — but that
 only works if it's a real mount, backed by an `/etc/fstab` entry, not just a
 one-off `mount` command. Set that up once:
 

@@ -1,53 +1,46 @@
-"""Entry point for the hub process (console script: `dragonfly-hub`).
+"""Entry point for the capture process (console script: `dragonfly-capture`).
 
-Runs as a single process on the Pi ("Phila"): wires config -> event bus ->
-registry -> camera heartbeat modules -> dashboard. The dashboard (FastAPI,
-served over uvicorn) and the MQTT event loop share one in-memory
-DeviceRegistry, so no separate process/IPC is needed for the dashboard to see
-live status.
+Owns everything that actually talks to a camera: the heartbeat, the
+recorder, and the live-stream ffmpeg manager. Deliberately has no HTTP
+server of its own — the portal process (portal_main.py) serves the web
+UI, reading state that capture publishes over MQTT (heartbeat/recording
+events) and, for live view, files capture writes to a well-known shared
+directory. See docs/architecture.md for why these are split into two
+processes: so restarting the dashboard (frequent, e.g. every UI tweak)
+never interrupts an in-progress recording, and vice versa.
 """
 from __future__ import annotations
 
-import json
 import logging
+import signal
+import threading
 
-import uvicorn
-
-from dragonfly.dashboard.app import app as dashboard_app
 from dragonfly.dashboard.live import LiveStreamManager
 from dragonfly.hub.config import load_config
 from dragonfly.hub.eventbus import EventBus
-from dragonfly.hub.registry import DeviceRegistry
 from dragonfly.modules.camera.recorder import SegmentedRecorder
 from dragonfly.modules.camera.rtsp_camera import RtspCameraModule
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-log = logging.getLogger("dragonfly.hub")
+log = logging.getLogger("dragonfly.capture")
 
 
 def run() -> None:
     config = load_config()
-    registry = DeviceRegistry()
     bus = EventBus(host=config.mqtt.host, port=config.mqtt.port)
 
-    def on_event(topic: str, payload: bytes) -> None:
-        # dragonfly/<module_id>/<subtopic>
+    live_manager = LiveStreamManager({cam.id: cam.rtsp_url for cam in config.cameras})
+
+    def on_event(topic: str, _payload: bytes) -> None:
+        # dragonfly/<module_id>/<subtopic> — the only inbound command capture
+        # currently listens for is the portal asking it to (ensure it) starts
+        # live view for a camera someone's looking at.
         parts = topic.split("/")
         if len(parts) < 3:
             return
         module_id, subtopic = parts[1], parts[2]
-        if subtopic == "heartbeat":
-            try:
-                data = json.loads(payload)
-            except json.JSONDecodeError:
-                log.warning("bad heartbeat payload on %s: %r", topic, payload)
-                return
-            registry.touch(
-                module_id,
-                data.get("type", "unknown"),
-                online=bool(data.get("online", False)),
-            )
-        log.info("event topic=%s payload=%r", topic, payload)
+        if subtopic == "live_start_request" and live_manager.has(module_id):
+            live_manager.ensure_running(module_id)
 
     bus.on_event(on_event)
     bus.connect()
@@ -90,32 +83,27 @@ def run() -> None:
             rec.start()
             started_recorders.append(rec)
         except Exception:
-            # A missing ffmpeg binary or bad recordings path shouldn't take down
-            # the dashboard/heartbeat — log it and keep the rest of the hub alive.
             log.exception("failed to start recorder %s — continuing without it", rec.module_id)
     recorders = started_recorders
 
-    # Live view uses each camera's main (HD) stream, on-demand only — see
-    # dashboard/live.py for why it isn't always-on like the recorder/heartbeat.
-    live_manager = LiveStreamManager({cam.id: cam.rtsp_url for cam in config.cameras})
     live_manager.start_reaper()
 
-    # Hand the shared registry + camera metadata to the dashboard before it
-    # starts serving requests.
-    dashboard_app.state.registry = registry
-    dashboard_app.state.camera_config = {cam.id: cam for cam in config.cameras}
-    dashboard_app.state.live_manager = live_manager
-    dashboard_app.state.storage_path = config.storage.recordings_path
-
     log.info(
-        "dragonfly-hub starting up on %s:%d (%d camera module(s), %d recorder(s))",
-        config.dashboard.bind_host,
-        config.dashboard.port,
+        "dragonfly-capture starting up (%d camera module(s), %d recorder(s))",
         len(camera_modules),
         len(recorders),
     )
+
+    # systemd sends SIGTERM on stop/restart; Python only raises KeyboardInterrupt
+    # for SIGINT, so without this a `systemctl restart` would skip our cleanup
+    # (closing ffmpeg log file handles, stopping live-view processes cleanly)
+    # and rely entirely on systemd's blunter cgroup-kill instead.
+    shutdown = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_: shutdown.set())
+    signal.signal(signal.SIGINT, lambda *_: shutdown.set())
+
     try:
-        uvicorn.run(dashboard_app, host=config.dashboard.bind_host, port=config.dashboard.port)
+        shutdown.wait()
     finally:
         for mod in camera_modules:
             mod.stop()

@@ -28,10 +28,16 @@ if ! mountpoint -q /mnt/dragonfly-hdd; then
     echo "won't work until the external HDD is mounted there (add an fstab entry)."
 fi
 
-echo "== Installing systemd service =="
-sudo cp deploy/dragonfly-hub.service /etc/systemd/system/dragonfly-hub.service
+echo "== Installing systemd services =="
+# Two independent services — capture (camera heartbeat/recorder/live-stream)
+# and portal (web dashboard) — so restarting one never interrupts the other.
+# See docs/architecture.md.
+sudo cp deploy/dragonfly-capture.service /etc/systemd/system/dragonfly-capture.service
+sudo cp deploy/dragonfly-portal.service /etc/systemd/system/dragonfly-portal.service
 sudo systemctl daemon-reload
-sudo systemctl enable dragonfly-hub
-sudo systemctl restart dragonfly-hub
+sudo systemctl enable dragonfly-capture dragonfly-portal
+sudo systemctl restart dragonfly-capture dragonfly-portal
 
-echo "== Done. Check status with: sudo systemctl status dragonfly-hub =="
+echo "== Done. Check status with:"
+echo "     sudo systemctl status dragonfly-capture"
+echo "     sudo systemctl status dragonfly-portal =="

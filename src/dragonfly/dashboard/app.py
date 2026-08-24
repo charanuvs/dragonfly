@@ -1,19 +1,26 @@
 """Local-LAN monitoring dashboard (FastAPI).
 
 Bound to the Pi's LAN interface only (config.dashboard.bind_host) — see
-docs/network.md. Reads live state from app.state.registry / app.state.camera_config,
-which hub/main.py sets before starting uvicorn.
+docs/network.md. Runs in the portal process (hub/portal_main.py), which is
+independent from the capture process (hub/capture_main.py) that actually
+owns the heartbeat/recorder/live-stream ffmpeg — see docs/architecture.md.
+This module has no direct reference to any capture-side object; state comes
+from app.state.registry (built by portal's own MQTT subscription) and, for
+live view, from files capture writes to a well-known shared directory plus
+an MQTT request published through app.state.event_bus.
 
-For local dev without the full hub running:
+For local dev without the capture process running:
 
     uvicorn dragonfly.dashboard.app:app --reload
 
 (will show "No modules reporting yet" since app.state.registry is None until
-main.py wires it up.)
+portal_main.py wires it up, and live view won't have anything to show since
+nothing is publishing to the shared HLS directory.)
 """
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
@@ -22,12 +29,13 @@ from dragonfly.hub.sysinfo import get_system_stats
 
 app = FastAPI(title="Dragonfly")
 
-# Set by hub/main.py at startup. Left as None/{}/"." so the app still imports
-# (and /health works) if run standalone.
+# Set by hub/portal_main.py at startup. Left as None/{}/"." so the app still
+# imports (and /health works) if run standalone.
 app.state.registry = None
 app.state.camera_config = {}
-app.state.live_manager = None
 app.state.storage_path = "/"
+app.state.event_bus = None
+app.state.live_dir = Path("/tmp/dragonfly-live")
 
 
 @app.get("/health")
@@ -71,23 +79,29 @@ def index() -> str:
 
 @app.get("/live/{camera_id}", response_class=HTMLResponse)
 def live_page(camera_id: str, request: Request):
-    manager = request.app.state.live_manager
-    if manager is None or not manager.has(camera_id):
+    if camera_id not in request.app.state.camera_config:
         return HTMLResponse(f"<p>No live stream configured for '{camera_id}'.</p>", status_code=404)
     return _LIVE_HTML.replace("__CAMERA_ID__", camera_id)
 
 
 @app.get("/live/{camera_id}/{filename}")
 def live_file(camera_id: str, filename: str, request: Request):
-    manager = request.app.state.live_manager
-    if manager is None or not manager.has(camera_id) or "/" in filename or ".." in filename:
+    if camera_id not in request.app.state.camera_config or "/" in filename or ".." in filename:
         return Response(status_code=404)
 
-    playlist_path = manager.ensure_running(camera_id)
-    file_path = playlist_path.parent / filename
+    # Ask the capture process (a separate process — see docs/architecture.md)
+    # to (ensure it) starts this camera's live ffmpeg. Every segment/playlist
+    # fetch re-publishes this, which conveniently also acts as the "someone's
+    # still watching" keep-alive for capture's idle-timeout reaper — no
+    # separate touch mechanism needed.
+    bus = request.app.state.event_bus
+    if bus is not None:
+        bus.publish(camera_id, "live_start_request", "1")
 
-    # First request after starting cold has to wait for ffmpeg to produce
-    # the initial playlist/segment.
+    file_path = request.app.state.live_dir / camera_id / filename
+
+    # First request after starting cold has to wait for capture's ffmpeg to
+    # produce the initial playlist/segment.
     for _ in range(20):
         if file_path.exists():
             break

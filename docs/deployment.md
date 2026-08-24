@@ -44,8 +44,10 @@ bash deploy/install_pi.sh
 `deploy/install_pi.sh` creates a virtualenv, installs the project
 (`pip install -e ".[camera]"`), copies `config/dragonfly.example.yaml` to
 `config/dragonfly.yaml` if it doesn't exist yet, mounts/checks the external
-HDD, and installs+enables the systemd service
-(`deploy/dragonfly-hub.service`).
+HDD, and installs+enables the two systemd services
+(`deploy/dragonfly-capture.service`, `deploy/dragonfly-portal.service`) — see
+[`architecture.md`](architecture.md) for why capture and portal are split
+into independent processes.
 
 ## Everyday workflow: shipping a change
 
@@ -61,13 +63,20 @@ HDD, and installs+enables the systemd service
 3. Deploy to the Pi over Tailscale:
 
    ```bash
-   bash deploy/deploy.sh
+   bash deploy/deploy.sh            # restart both capture + portal
+   bash deploy/deploy.sh portal     # restart only the dashboard
+   bash deploy/deploy.sh capture    # restart only camera capture
    ```
 
    This runs `ssh charan@phila` and, on the Pi: `git pull`,
    `pip install -e ".[camera]"` (picks up new dependencies), and
-   `sudo systemctl restart dragonfly-hub`. It then tails the service log for
-   a few seconds so you can see the new version came up cleanly.
+   `sudo systemctl restart` the selected service(s) (`dragonfly-capture`,
+   `dragonfly-portal`, or both — default is both). It then tails the
+   restarted service(s)' logs for a few seconds so you can see the new
+   version came up cleanly. Use `portal`/`capture` after a change scoped to
+   just the dashboard or just capture, so the other one keeps running
+   uninterrupted (recording/live view for `portal` changes, the dashboard
+   for `capture` changes).
 
 No manual steps on the Pi are needed for a routine update — `deploy.sh` from
 the Mac is the whole workflow.
@@ -76,11 +85,11 @@ the Mac is the whole workflow.
 
 ```bash
 ssh charan@phila "cd ~/dragonfly && git log --oneline -5"
-ssh charan@phila "cd ~/dragonfly && git checkout <commit> && sudo systemctl restart dragonfly-hub"
+ssh charan@phila "cd ~/dragonfly && git checkout <commit> && sudo systemctl restart dragonfly-capture dragonfly-portal"
 ```
 
 ## Logs / debugging
 
 ```bash
-ssh charan@phila "journalctl -u dragonfly-hub -f"
+ssh charan@phila "journalctl -u dragonfly-capture -u dragonfly-portal -f"
 ```

@@ -1,0 +1,18 @@
+[Unit]
+Description=Dragonfly portal service (web dashboard)
+After=network-online.target mosquitto.service
+Wants=network-online.target
+# Deliberately no RequiresMountsFor here (unlike dragonfly-capture) — the
+# dashboard should come up and show "disk not mounted" rather than refuse to
+# start, and it doesn't itself write to the recordings drive.
+
+[Service]
+Type=simple
+User=charan
+WorkingDirectory=/home/charan/dragonfly
+ExecStart=/home/charan/dragonfly/.venv/bin/dragonfly-portal
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

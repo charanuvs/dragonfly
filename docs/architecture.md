@@ -8,39 +8,71 @@ storage, and the only device with any path to the internet. Everything else —
 cameras, environmental sensors, door/window sensors, whatever gets added later
 — is a spoke that only talks to the hub.
 
+On the Pi itself, the hub is split into **two independent processes** —
+capture and portal — coordinating only over MQTT, not by sharing memory:
+
 ```
-                    ┌─────────────────────────────┐
-                    │        Raspberry Pi          │
-                    │           (hub)               │
-                    │                                │
-   isolated  ───────┤  MQTT broker (Mosquitto)       │
-   sensor    ◄──────┤  hub service (device registry, │
-   network          │   recorder, event bus)          ├──────►  home LAN
-   (no internet)     │  dashboard (FastAPI, LAN-only) │        (internet,
-                    │  external HDD (recordings, DB)  │         your Mac, phone)
-                    └─────────────────────────────┘
+                    ┌───────────────────────────────────────┐
+                    │              Raspberry Pi                │
+                    │                                           │
+   isolated  ───────┤  MQTT broker (Mosquitto)                  │
+   sensor    ◄──────┤  ┌──────────────┐      ┌────────────────┐│
+   network          │  │   capture     │◄────►│     portal      ││
+   (no internet)     │  │ (heartbeat,   │ MQTT │  (FastAPI       ││──►  home LAN
+                    │  │  recorder,    │      │   dashboard,    ││     (internet,
+                    │  │  live ffmpeg) │      │   own registry) ││      your Mac, phone)
+                    │  └──────────────┘      └────────────────┘│
+                    │  external HDD (recordings)                │
+                    └───────────────────────────────────────┘
 ```
+
+Why split it this way: early on, both lived in one process, and every
+dashboard tweak meant a `systemctl restart` that also killed whatever
+recording was mid-flight. Splitting them means restarting the dashboard
+after a UI change never interrupts a recording or a live stream, and vice
+versa — the two genuinely have different release cadences (the dashboard
+changes constantly during development; capture should barely ever need to
+restart once it's working).
 
 ## Components
 
-### Hub service (`src/dragonfly/hub/`)
+### Shared code (`src/dragonfly/hub/`)
 
-The always-running core process on the Pi.
+Used by both processes, contains no process-specific logic itself.
 
 - **`config.py`** — loads `config/dragonfly.yaml` (per-deployment, not committed
   to git; see `config/dragonfly.example.yaml` for the template).
 - **`registry.py`** — tracks every known module (camera, sensor): its id,
-  type, last-seen time, and current status. This is the single source of
-  truth for "what devices exist and are they alive."
+  type, last-seen time, and current status. Each process that needs a view
+  of "what devices exist and are they alive" builds its own instance from
+  the MQTT stream — there's no single shared registry object anymore, since
+  there's no single process to own it.
 - **`eventbus.py`** — thin wrapper around an MQTT broker running on the Pi
   itself (Mosquitto). Modules publish readings/events to topics like
-  `dragonfly/<module_id>/state`; the hub subscribes to all of them. MQTT is
-  used because it works over the isolated network with no internet
-  dependency, is trivial to implement on constrained devices (ESP32, Pi Zero,
-  etc.), and decouples modules from the hub's internal code.
-- **`main.py`** — process entry point (`dragonfly-hub` console script),
-  wires config → event bus → registry → recorder → dashboard, run under
-  systemd (see `deploy/dragonfly-hub.service`).
+  `dragonfly/<module_id>/state`; anyone who cares subscribes. MQTT is used
+  because it works over the isolated network with no internet dependency,
+  is trivial to implement on constrained devices (ESP32, Pi Zero, etc.), and
+  — critically for the two-process split — decouples publishers from
+  subscribers entirely, which is exactly what capture/portal needed.
+- **`sysinfo.py`** — CPU/mem/disk stats, used only by portal (self-contained,
+  no capture dependency).
+
+### Capture process (`hub/capture_main.py`, console script `dragonfly-capture`)
+
+Owns everything that actually talks to a camera: the heartbeat modules, the
+recorders, and the live-view ffmpeg manager (below). Publishes
+heartbeat/recording events to MQTT; has no HTTP server and no direct
+knowledge of the dashboard. Run under systemd as `dragonfly-capture.service`.
+
+### Portal process (`hub/portal_main.py`, console script `dragonfly-portal`)
+
+Serves the web dashboard (FastAPI/uvicorn). Has no direct reference to any
+capture-side object — it builds its own `DeviceRegistry` by independently
+subscribing to the same `dragonfly/#` MQTT topics capture publishes to, and
+for live view, publishes a request over MQTT and then reads the resulting
+files straight off disk from a well-known shared directory (rather than
+holding any reference to capture's `LiveStreamManager`). Run under systemd
+as `dragonfly-portal.service`.
 
 ### Modules (`src/dragonfly/modules/`)
 
@@ -76,24 +108,29 @@ history — as those modules are built out). Binds only to the Pi's
 LAN-reachable interface — never to the isolated sensor interface, never to a
 tailscale/public interface without deliberately deciding to do so later.
 
-`hub/main.py` runs the dashboard in the same process as the hub service
-(uvicorn, alongside the MQTT event loop in a background thread) so both share
-one in-memory `DeviceRegistry` with no extra IPC — the dashboard's
-`/api/modules` endpoint just reads `app.state.registry` directly. This is
-the simplest thing that works for a single-hub deployment; if the dashboard
-ever needs to run as a separate process, that state moves to the SQLite
-database described below instead.
+`hub/portal_main.py` runs the dashboard (uvicorn, alongside its own MQTT
+event loop in a background thread) in a process separate from capture. The
+dashboard's `/api/modules` endpoint reads `app.state.registry`, but that
+registry is portal's own — built by independently subscribing to MQTT and
+replaying heartbeat/recording events — not a shared object with capture.
+There is no direct IPC between the two processes at all, only MQTT plus the
+shared live-view directory described next.
 
 **Live view** (`dashboard/live.py`, `/live/<camera-id>`) is a third, separate
-way the hub touches a camera besides the heartbeat and the recorder: an
+way capture touches a camera besides the heartbeat and the recorder: an
 on-demand `ffmpeg` process remuxes (not re-encodes — `-c:v copy`, cheap on
-CPU) the camera's main/HD stream into short HLS segments, served to a
-browser via `hls.js`. It only starts when someone opens the live page and
-auto-stops after ~60s with no viewers, because unlike the always-on
-heartbeat/recorder, a third concurrent connection to the camera is the one
-most likely to bump into a cheap camera's connection limit — see the caveat
-in `docs/recording.md`/README if live view and a recording cutover overlap
-and one fails.
+CPU) the camera's main/HD stream into short HLS segments. Since capture owns
+this process and portal serves the HTTP request, the two coordinate over
+MQTT: portal publishes a `live_start_request` event on each segment/playlist
+fetch (which doubles as the "still watching" keep-alive), capture's
+`LiveStreamManager` starts/keeps the ffmpeg process running and writes HLS
+segments to a well-known shared directory (`/tmp/dragonfly-live/<camera-id>`
+by default), and portal reads the resulting files straight off disk to serve
+to the browser via `hls.js`. It auto-stops after ~60s with no requests,
+because unlike the always-on heartbeat/recorder, a third concurrent
+connection to the camera is the one most likely to bump into a cheap
+camera's connection limit — see the caveat in `docs/recording.md`/README if
+live view and a recording cutover overlap and one fails.
 
 ### Storage
 

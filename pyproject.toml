@@ -29,7 +29,8 @@ dev = [
 ]
 
 [project.scripts]
-dragonfly-hub = "dragonfly.hub.main:run"
+dragonfly-capture = "dragonfly.hub.capture_main:run"
+dragonfly-portal = "dragonfly.hub.portal_main:run"
 
 [tool.setuptools.packages.find]
 where = ["src"]

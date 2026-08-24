@@ -9,13 +9,19 @@ so it isn't worth keeping alive when nobody's watching.
 
 Uses `-c:v copy` (remux, not re-encode) into short HLS segments — cheap on
 CPU since it's not touching the video data, just repackaging it.
+
+Runs in the capture process, not the portal — see docs/architecture.md for
+why they're split. The HLS files are written to a fixed, well-known
+directory (not a randomly-named tempdir) specifically so the portal process
+can serve them straight off disk without needing any direct link to this
+manager or the ffmpeg processes it owns; the two coordinate over MQTT
+instead (portal publishes a `live_start_request`, capture acts on it).
 """
 from __future__ import annotations
 
 import logging
 import shutil
 import subprocess
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -25,6 +31,10 @@ log = logging.getLogger("dragonfly.dashboard.live")
 IDLE_TIMEOUT_S = 60
 SEGMENT_S = 2
 PLAYLIST_SIZE = 6
+
+# Fixed so the portal process (a separate process, possibly restarted
+# independently) always knows where to look, without any IPC beyond MQTT.
+DEFAULT_LIVE_DIR = Path("/tmp/dragonfly-live")
 
 
 class _CameraStream:
@@ -40,9 +50,10 @@ class _CameraStream:
 
 
 class LiveStreamManager:
-    def __init__(self, cameras: dict[str, str]) -> None:
+    def __init__(self, cameras: dict[str, str], base_dir: Path = DEFAULT_LIVE_DIR) -> None:
         """cameras: {module_id: rtsp_url} — the stream to use for live view."""
-        self._base_dir = Path(tempfile.mkdtemp(prefix="dragonfly-live-"))
+        self._base_dir = base_dir
+        self._base_dir.mkdir(parents=True, exist_ok=True)
         self._streams = {
             module_id: _CameraStream(rtsp_url, self._base_dir / module_id)
             for module_id, rtsp_url in cameras.items()
@@ -60,7 +71,7 @@ class LiveStreamManager:
         with self._lock:
             for stream in self._streams.values():
                 self._stop_stream(stream)
-        shutil.rmtree(self._base_dir, ignore_errors=True)
+                shutil.rmtree(stream.out_dir, ignore_errors=True)
 
     def has(self, module_id: str) -> bool:
         return module_id in self._streams

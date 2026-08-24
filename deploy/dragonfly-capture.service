@@ -1,5 +1,5 @@
 [Unit]
-Description=Dragonfly hub service
+Description=Dragonfly capture service (heartbeat, recorder, live-stream ffmpeg)
 After=network-online.target mosquitto.service mnt-dragonfly\x2dhdd.mount
 Wants=network-online.target
 # Refuse to start until the recordings drive is actually mounted here — this
@@ -12,7 +12,7 @@ RequiresMountsFor=/mnt/dragonfly-hdd
 Type=simple
 User=charan
 WorkingDirectory=/home/charan/dragonfly
-ExecStart=/home/charan/dragonfly/.venv/bin/dragonfly-hub
+ExecStart=/home/charan/dragonfly/.venv/bin/dragonfly-capture
 Restart=on-failure
 RestartSec=5
 
