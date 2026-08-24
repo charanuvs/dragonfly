@@ -28,6 +28,7 @@ app.state.registry = None
 app.state.camera_config = {}
 app.state.live_manager = None
 app.state.storage_path = "/"
+app.state.stats_history = None
 
 
 @app.get("/health")
@@ -62,6 +63,12 @@ def list_modules(request: Request) -> list[dict]:
 @app.get("/api/system")
 def system_stats(request: Request) -> dict:
     return get_system_stats(request.app.state.storage_path)
+
+
+@app.get("/api/system/history")
+def system_history(request: Request) -> list[dict]:
+    history = request.app.state.stats_history
+    return history.all() if history else []
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -126,13 +133,61 @@ _INDEX_HTML = """<!doctype html>
       padding: .6rem 1.25rem; margin-bottom: 1.25rem; font-size: .85rem; color: #ccc;
     }
     .sysbar b { color: #eee; }
+    .history-card {
+      border: 1px solid #333; border-radius: 10px; padding: 1rem 1.25rem;
+      background: #1a1a1a; margin-bottom: 1.25rem;
+    }
+    .history-card .name { font-size: 1.1rem; font-weight: 600; margin-bottom: .5rem; }
   </style>
 </head>
 <body>
   <h1>Dragonfly</h1>
   <div id="sysbar" class="sysbar">Loading system stats&hellip;</div>
+  <div class="history-card">
+    <div class="name">CPU / memory &mdash; last 24h</div>
+    <canvas id="historyChart" height="70"></canvas>
+  </div>
   <div id="grid" class="grid"><p class="empty">Loading...</p></div>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js"></script>
   <script>
+    let historyChart = null;
+    async function refreshHistory() {
+      const res = await fetch('/api/system/history');
+      const data = await res.json();
+      const labels = data.map(d => new Date(d.ts * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}));
+      const cpu = data.map(d => d.cpu_percent);
+      const mem = data.map(d => d.mem_percent);
+      if (!historyChart) {
+        const ctx = document.getElementById('historyChart').getContext('2d');
+        historyChart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels,
+            datasets: [
+              { label: 'CPU %', data: cpu, borderColor: '#4da3ff', backgroundColor: 'transparent', tension: .2, pointRadius: 0, borderWidth: 1.5 },
+              { label: 'Mem %', data: mem, borderColor: '#2ecc71', backgroundColor: 'transparent', tension: .2, pointRadius: 0, borderWidth: 1.5 },
+            ],
+          },
+          options: {
+            responsive: true,
+            animation: false,
+            scales: {
+              y: { min: 0, max: 100, ticks: { color: '#888' }, grid: { color: '#292929' } },
+              x: { ticks: { color: '#888', maxTicksLimit: 8 }, grid: { display: false } },
+            },
+            plugins: { legend: { labels: { color: '#ccc' } } },
+          },
+        });
+      } else {
+        historyChart.data.labels = labels;
+        historyChart.data.datasets[0].data = cpu;
+        historyChart.data.datasets[1].data = mem;
+        historyChart.update('none');
+      }
+    }
+    refreshHistory();
+    setInterval(refreshHistory, 60000);
+
     function formatUptime(s) {
       const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
       return d > 0 ? `${d}d ${h}h` : `${h}h`;
