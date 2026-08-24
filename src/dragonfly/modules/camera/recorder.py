@@ -95,6 +95,10 @@ class SegmentedRecorder(SensorModule):
                     proc.terminate()
                 log_f.close()
             self._processes = []
+        # Explicit "stopped" event so the dashboard reflects a clean shutdown
+        # immediately, rather than waiting for the last segment's start time
+        # to just go stale.
+        self.publish("recording", json.dumps({"active": False, "stopped": time.time()}))
         if self._record_thread:
             self._record_thread.join(timeout=5)
         if self._cleanup_thread:
@@ -155,7 +159,10 @@ class SegmentedRecorder(SensorModule):
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=log_f)
         with self._lock:
             self._processes.append((proc, log_f))
-        self.publish("recording", json.dumps({"segment": str(path), "started": boundary_epoch}))
+        self.publish(
+            "recording",
+            json.dumps({"active": True, "segment": str(path), "started": boundary_epoch}),
+        )
 
     def _reap_finished(self) -> None:
         with self._lock:

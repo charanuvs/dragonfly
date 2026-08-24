@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 
 import uvicorn
 
@@ -51,6 +52,18 @@ def run() -> None:
                 module_id,
                 data.get("type", "unknown"),
                 online=bool(data.get("online", False)),
+            )
+        elif subtopic == "recording":
+            try:
+                data = json.loads(payload)
+            except json.JSONDecodeError:
+                log.warning("bad recording payload on %s: %r", topic, payload)
+                return
+            registry.touch_recording(
+                module_id,
+                active=bool(data.get("active", True)),
+                segment=data.get("segment"),
+                ts=float(data.get("started", data.get("stopped", time.time()))),
             )
 
     bus.on_event(on_event)

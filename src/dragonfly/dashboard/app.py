@@ -54,6 +54,19 @@ def list_modules(request: Request) -> list[dict]:
     modules = []
     for status in registry.all():
         meta = camera_config.get(status.module_id)
+
+        # A recorder is only really "active" if we've heard from it recently.
+        # It publishes on every segment launch (every segment_seconds); if
+        # capture crashed without a clean stop, the last "active: true" event
+        # goes stale rather than being updated to false, so treat an
+        # overdue segment as not-recording instead of trusting it forever.
+        recording_active = status.recording_active
+        if recording_active and status.recording_last_event is not None:
+            segment_s = meta.segment_seconds if meta else 300
+            overlap_s = meta.overlap_seconds if meta else 10
+            if now - status.recording_last_event > segment_s + overlap_s + 30:
+                recording_active = False
+
         modules.append(
             {
                 "module_id": status.module_id,
@@ -62,6 +75,14 @@ def list_modules(request: Request) -> list[dict]:
                 "online": status.online,
                 "last_seen": status.last_seen,
                 "seconds_since_seen": round(now - status.last_seen, 1),
+                "recording_enabled": bool(meta.record) if meta else False,
+                "recording_active": recording_active,
+                "recording_last_segment": status.recording_last_segment,
+                "recording_seconds_since_event": (
+                    round(now - status.recording_last_event, 1)
+                    if status.recording_last_event is not None
+                    else None
+                ),
             }
         )
     return modules
@@ -242,6 +263,16 @@ _INDEX_HTML = """<!doctype html>
             ${m.online ? 'Online' : 'Offline'}
           </div>
           <div class="meta">last check ${m.seconds_since_seen.toFixed(0)}s ago</div>
+          ${m.recording_enabled ? `
+          <div class="status">
+            <span class="dot ${m.recording_active ? 'online' : 'offline'}"></span>
+            ${m.recording_active ? 'Recording to disk' : 'Not recording'}
+          </div>
+          <div class="meta">
+            ${m.recording_seconds_since_event !== null
+              ? `last segment ${m.recording_seconds_since_event.toFixed(0)}s ago`
+              : 'no recording activity yet'}
+          </div>` : ''}
           ${m.module_type.includes('camera') ? `<div class="meta"><a href="/live/${m.module_id}" style="color:#4da3ff">Live view &rarr;</a></div>` : ''}
         </div>
       `).join('');
