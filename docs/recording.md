@@ -118,50 +118,52 @@ sudo mount -a                  # mounts it now and validates the fstab line
 `nofail` matters: without it, a missing/failed drive can hang the Pi's boot
 entirely waiting for a mount that'll never come.
 
-## Auto-mounting on plug-in, and auto-restarting capture
+## Auto-mounting on plug-in, and what happens if the drive disappears
 
 The `/etc/fstab` entry above only gets applied at boot — if you unplug and
 replug the drive while Phila is already running, nothing remounts it
-automatically without the udev rule below, and `dragonfly-capture` won't
-pick a remount back up on its own either without the service change below.
+automatically without the udev rule below.
 
-**1. Auto-mount whenever this specific drive is plugged in** (not just at
+**Auto-mount whenever this specific drive is plugged in** (not just at
 boot), via a udev rule matching its filesystem UUID (the same UUID from
 `blkid` above):
 
 ```bash
 sudo tee /etc/udev/rules.d/99-dragonfly-hdd.rules <<'EOF'
-SUBSYSTEM=="block", ENV{ID_FS_UUID}=="<uuid-from-blkid>", ACTION=="add", RUN+="/usr/bin/systemctl start mnt-dragonfly\x2dhdd.mount", RUN+="/usr/bin/systemctl start dragonfly-capture.service"
+SUBSYSTEM=="block", ENV{ID_FS_UUID}=="<uuid-from-blkid>", ACTION=="add", RUN+="/usr/bin/systemctl start mnt-dragonfly\x2dhdd.mount"
 EOF
 sudo udevadm control --reload-rules
 ```
 
 Replace `<uuid-from-blkid>` with the actual UUID. `mnt-dragonfly\x2dhdd.mount`
 is the unit name systemd generates from the `/mnt/dragonfly-hdd` fstab entry
-(the escaped `\x2d` is a literal `-`) — this rule tells udev, the instant the
-matching device shows up, to (re-)start both the mount *and* capture
-directly — see why both are needed below.
+(the escaped `\x2d` is a literal `-`) — this rule tells udev to ask systemd
+to (re-)mount it the instant the matching device shows up.
 
-**2. Auto-restart `dragonfly-capture` once the drive is back.**
-`deploy/dragonfly-capture.service` uses `BindsTo=mnt-dragonfly\x2dhdd.mount`
-(instead of only `RequiresMountsFor`): unplugging the drive tears capture
-down cleanly instead of leaving it running with a dead recorder thread (see
-the "what happens if I disconnect storage" discussion — this is what fixes
-that).
+**What happens on the capture side if the drive is unplugged:**
+`dragonfly-capture.service` only uses `RequiresMountsFor` (startup-time gate
+— won't start until the drive is mounted) and deliberately does *not* tear
+the whole service down if the drive later disappears while running.
+Heartbeat and live view don't touch this drive at all, so there's no reason
+for the camera to show offline just because storage briefly vanished — an
+earlier version of this used `BindsTo=` to stop the whole service, but that
+also killed heartbeat/live view as collateral damage, and (confirmed in
+testing) `Restart=` doesn't even bring a `BindsTo`-stopped service back on
+its own, since that kind of stop is treated as intentional rather than a
+failure.
 
-Important nuance: `Restart=always` does **not** bring capture back on its
-own here. `BindsTo=` stopping a unit counts as a clean, intentional stop
-(systemd logs "Stopping... / Deactivated successfully"), and systemd's
-`Restart=` policies — even `always` — don't kick in after a stop like that,
-only after the process actually crashes/exits unexpectedly. Confirmed this
-in practice: after unplugging the drive, `systemctl status dragonfly-capture`
-just sat at `inactive (dead)` indefinitely, with no retry attempts logged.
-So the udev rule above is what actually brings capture back — it explicitly
-`systemctl start`s capture the instant the drive reappears and remounts,
-rather than relying on systemd to notice and retry by itself. (`Restart=always`
-is still worth keeping in the unit file — it covers a genuine crash of the
-capture process for reasons unrelated to the drive.) Redeploy this updated unit file the
-normal way (`bash deploy/install_pi.sh` re-copies it, or manually
+Instead, `SegmentedRecorder` (`recorder.py`) catches storage failures
+itself: if a segment can't be started or a write fails, it's caught,
+reported over MQTT as "not recording" (shows up immediately on the
+dashboard), and retried on the next scheduled segment — without crashing
+the recording thread or needing capture to restart at all. Once the udev
+rule above remounts the drive, the next scheduled segment attempt succeeds
+and recording resumes automatically, reporting "active" again — usually
+within one `segment_seconds` interval (5 min by default) of the drive coming
+back. Heartbeat and live view are unaffected throughout.
+
+Redeploy the unit file the normal way after pulling
+(`bash deploy/install_pi.sh` re-copies it, or manually
 `sudo cp deploy/dragonfly-capture.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl restart dragonfly-capture`).
 
 All of this is configurable per-camera in `config/dragonfly.yaml`

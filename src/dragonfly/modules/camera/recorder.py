@@ -27,6 +27,13 @@ of "truncate old footage off the front as a ring buffer" (a real byte-level
 ring buffer isn't feasible for MP4 or any GOP-based codec — see
 docs/recording.md). `retention_days`, if set, is an independent hard
 ceiling (e.g. a privacy/legal cutoff), not the primary mechanism.
+
+Resilient to storage disappearing out from under it (e.g. the recordings
+drive gets unplugged): a failed segment launch or write never crashes the
+recording thread, it's caught, reported over MQTT as "not recording", and
+retried on the next scheduled segment. This is deliberately just a recorder
+concern — heartbeat and live view run independently in the same process and
+are unaffected by a storage problem.
 """
 from __future__ import annotations
 
@@ -151,7 +158,6 @@ class SegmentedRecorder(SensorModule):
     def _launch_segment(self, boundary_epoch: float, duration: float) -> None:
         dt = datetime.fromtimestamp(boundary_epoch).astimezone()
         path = compute_segment_path(dt, self.root, self.segment_seconds)
-        path.parent.mkdir(parents=True, exist_ok=True)
         cmd = [
             "ffmpeg", "-nostdin", "-y", "-loglevel", "warning",
             "-rtsp_transport", "tcp", "-timeout", "15000000",
@@ -173,9 +179,29 @@ class SegmentedRecorder(SensorModule):
             "-movflags", "+faststart",
             str(path),
         ]
-        log.info("recording segment -> %s", path)
-        log_f = open(path.with_suffix(".log"), "w")
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=log_f)
+        # Storage can disappear out from under us (drive unplugged) between
+        # one segment and the next. That must never kill this thread — it's
+        # the *only* thing that's supposed to notice and report "not
+        # recording"; heartbeat and live view run independently in the same
+        # process and shouldn't be affected by a storage problem at all. So
+        # any failure here is caught, reported, and retried on the next
+        # scheduled segment — never raised.
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            log.info("recording segment -> %s", path)
+            log_f = open(path.with_suffix(".log"), "w")
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=log_f)
+        except OSError:
+            log.warning(
+                "could not start recording segment %s — storage unavailable? "
+                "will retry next scheduled segment",
+                path, exc_info=True,
+            )
+            self.publish(
+                "recording",
+                json.dumps({"active": False, "error": "write_failed", "ts": time.time()}),
+            )
+            return
         with self._lock:
             self._processes.append({"proc": proc, "log_f": log_f, "path": path})
         self.publish(
@@ -195,6 +221,21 @@ class SegmentedRecorder(SensorModule):
                 if proc.returncode != 0:
                     log.warning(
                         "ffmpeg segment exited %s — see %s", proc.returncode, entry["path"].with_suffix(".log")
+                    )
+                    # Report immediately rather than waiting for the dashboard's
+                    # staleness timeout — a non-zero exit (e.g. write I/O error
+                    # from the drive disappearing mid-segment) is a strong
+                    # signal recording actually stopped, not just delayed.
+                    self.publish(
+                        "recording",
+                        json.dumps(
+                            {
+                                "active": False,
+                                "error": "segment_failed",
+                                "segment": str(entry["path"]),
+                                "ts": time.time(),
+                            }
+                        ),
                     )
             self._processes = still_running
 

@@ -2,27 +2,28 @@
 Description=Dragonfly capture service (heartbeat, recorder, live-stream ffmpeg)
 After=network-online.target mosquitto.service mnt-dragonfly\x2dhdd.mount
 Wants=network-online.target
-# BindsTo (not just RequiresMountsFor) means this service is torn down
-# whenever the drive's mount unit goes away — e.g. the USB drive gets
-# unplugged mid-recording — instead of limping along with a dead recorder
-# thread. NOTE: Restart=always below does NOT bring it back on its own —
-# a BindsTo-triggered stop is a clean/intentional stop as far as systemd's
-# Restart= logic is concerned, not a failure, so it won't retry (confirmed:
-# `systemctl status` just sits at inactive/dead indefinitely after this).
-# It's the udev rule in docs/recording.md that actually restarts this
-# service, by explicitly `systemctl start`ing it the instant the drive is
-# plugged back in and remounted. Restart=always is still useful here for a
-# genuine crash of the capture process unrelated to the drive.
-BindsTo=mnt-dragonfly\x2dhdd.mount
-After=mnt-dragonfly\x2dhdd.mount
+# RequiresMountsFor (not BindsTo) only gates *startup* — it won't start
+# capture until the drive is mounted, but deliberately does NOT tear the
+# whole process down if the drive is later unplugged while running. That's
+# intentional: heartbeat and live view don't touch this drive at all, so
+# there's no reason to take the camera offline in the dashboard just
+# because the recordings drive briefly disappeared. Only the recorder
+# itself is affected — see recorder.py, which catches storage-write
+# failures internally, publishes "not recording", and keeps retrying each
+# scheduled segment attempt without needing capture (or this service) to
+# restart at all. (An earlier version of this file used BindsTo= to tear
+# the whole service down instead — reverted because it also killed
+# heartbeat/live view, and because Restart= doesn't even auto-recover from
+# a BindsTo-triggered stop; see git history / docs/recording.md.)
+RequiresMountsFor=/mnt/dragonfly-hdd
 
 [Service]
 Type=simple
 User=charan
 WorkingDirectory=/home/charan/dragonfly
 ExecStart=/home/charan/dragonfly/.venv/bin/dragonfly-capture
-Restart=always
-RestartSec=10
+Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
