@@ -15,6 +15,18 @@ and each process runs for `segment_seconds + overlap_seconds` before exiting
 on its own. So when segment N+1 starts, segment N is still recording its
 last `overlap_seconds` — both files contain that window, meaning a hiccup
 right at the cutover can never produce an actual gap in footage.
+
+Cleanup is storage-usage-based, not day-based: once disk usage crosses
+`high_watermark_pct`, the single oldest completed segment file gets deleted,
+then usage is rechecked — repeating one file at a time until usage drops
+back to `low_watermark_pct`. Deleting a whole segment file is a cheap
+metadata-only operation (no rewriting file contents), and since every
+segment always starts on a fresh keyframe, there's never a corrupt partial
+file left behind — this is the practical, container-format-friendly version
+of "truncate old footage off the front as a ring buffer" (a real byte-level
+ring buffer isn't feasible for MP4 or any GOP-based codec — see
+docs/recording.md). `retention_days`, if set, is an independent hard
+ceiling (e.g. a privacy/legal cutoff), not the primary mechanism.
 """
 from __future__ import annotations
 
@@ -57,7 +69,9 @@ class SegmentedRecorder(SensorModule):
         bitrate_kbps: int = 200,
         segment_seconds: int = 300,
         overlap_seconds: int = 10,
-        retention_days: int = 3,
+        high_watermark_pct: float = 90.0,
+        low_watermark_pct: float = 80.0,
+        retention_days: int | None = None,
     ) -> None:
         super().__init__(module_id, bus)
         self.rtsp_url = rtsp_url
@@ -66,12 +80,17 @@ class SegmentedRecorder(SensorModule):
         self.bitrate_kbps = bitrate_kbps
         self.segment_seconds = segment_seconds
         self.overlap_seconds = overlap_seconds
+        self.high_watermark_pct = high_watermark_pct
+        self.low_watermark_pct = low_watermark_pct
         self.retention_days = retention_days
 
         self._stop = threading.Event()
         self._record_thread: threading.Thread | None = None
         self._cleanup_thread: threading.Thread | None = None
-        self._processes: list[tuple[subprocess.Popen, object]] = []
+        # Each entry: {"proc": Popen, "log_f": file, "path": Path}. Tracked as
+        # dicts (not just proc/log_f) so cleanup can cross-reference which
+        # segment files are still being written and never delete one of those.
+        self._processes: list[dict] = []
         self._lock = threading.Lock()
 
     def start(self) -> None:
@@ -90,10 +109,10 @@ class SegmentedRecorder(SensorModule):
     def stop(self) -> None:
         self._stop.set()
         with self._lock:
-            for proc, log_f in self._processes:
-                if proc.poll() is None:
-                    proc.terminate()
-                log_f.close()
+            for entry in self._processes:
+                if entry["proc"].poll() is None:
+                    entry["proc"].terminate()
+                entry["log_f"].close()
             self._processes = []
         # Explicit "stopped" event so the dashboard reflects a clean shutdown
         # immediately, rather than waiting for the last segment's start time
@@ -158,7 +177,7 @@ class SegmentedRecorder(SensorModule):
         log_f = open(path.with_suffix(".log"), "w")
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=log_f)
         with self._lock:
-            self._processes.append((proc, log_f))
+            self._processes.append({"proc": proc, "log_f": log_f, "path": path})
         self.publish(
             "recording",
             json.dumps({"active": True, "segment": str(path), "started": boundary_epoch}),
@@ -167,18 +186,23 @@ class SegmentedRecorder(SensorModule):
     def _reap_finished(self) -> None:
         with self._lock:
             still_running = []
-            for proc, log_f in self._processes:
+            for entry in self._processes:
+                proc = entry["proc"]
                 if proc.poll() is None:
-                    still_running.append((proc, log_f))
+                    still_running.append(entry)
                     continue
-                log_f.close()
+                entry["log_f"].close()
                 if proc.returncode != 0:
                     log.warning(
-                        "ffmpeg segment exited %s — see %s.log", proc.returncode, "<segment>"
+                        "ffmpeg segment exited %s — see %s", proc.returncode, entry["path"].with_suffix(".log")
                     )
             self._processes = still_running
 
-    # -- retention cleanup --
+    def _active_paths(self) -> set[Path]:
+        with self._lock:
+            return {entry["path"] for entry in self._processes if entry["proc"].poll() is None}
+
+    # -- cleanup --
 
     def _cleanup_loop(self) -> None:
         while not self._stop.is_set():
@@ -186,37 +210,85 @@ class SegmentedRecorder(SensorModule):
                 self._run_cleanup()
             except Exception:
                 log.exception("cleanup pass failed")
-            if self._stop.wait(3600):  # check hourly
+            # Storage can fill quickly on a small drive, so this runs far more
+            # often than the old hourly date-based sweep did.
+            if self._stop.wait(120):
                 break
 
     def _run_cleanup(self) -> None:
         if not self.root.exists():
             return
+        if self.retention_days is not None:
+            self._retention_ceiling_cleanup()
+        self._watermark_cleanup()
 
+    def _retention_ceiling_cleanup(self) -> None:
+        """Optional hard cutoff independent of free space (privacy/legal)."""
         cutoff = datetime.now().date() - timedelta(days=self.retention_days)
-        for day_dir in sorted(self.root.iterdir()):
-            if not day_dir.is_dir():
-                continue
+        for day_dir in sorted(d for d in self.root.iterdir() if d.is_dir()):
             try:
                 day = datetime.strptime(day_dir.name, "%Y-%m-%d").date()
             except ValueError:
                 continue
             if day < cutoff:
-                log.info("removing expired recordings (older than %dd): %s", self.retention_days, day_dir)
+                log.info(
+                    "removing recordings older than retention_days=%d ceiling: %s",
+                    self.retention_days, day_dir,
+                )
                 shutil.rmtree(day_dir, ignore_errors=True)
 
-        # Safety net: date-based retention assumes the configured bitrate holds
-        # roughly steady. If actual usage still creeps too high, drop the
-        # oldest remaining day(s) rather than risk filling the disk.
-        self._emergency_cleanup_if_full()
-
-    def _emergency_cleanup_if_full(self, threshold_pct: float = 90.0) -> None:
+    def _watermark_cleanup(self) -> None:
+        """Primary mechanism: keep disk usage between the two watermarks by
+        deleting the single oldest completed segment file at a time."""
         usage = shutil.disk_usage(self.root)
-        while usage.used / usage.total * 100 > threshold_pct:
-            day_dirs = sorted(d for d in self.root.iterdir() if d.is_dir())
-            if not day_dirs:
-                break
-            oldest = day_dirs[0]
-            log.warning("disk >%.0f%% full — emergency-removing %s", threshold_pct, oldest)
-            shutil.rmtree(oldest, ignore_errors=True)
+        if usage.total == 0 or usage.used / usage.total * 100 < self.high_watermark_pct:
+            return
+
+        active = self._active_paths()
+        log.warning(
+            "disk usage %.1f%% >= high watermark %.1f%% — deleting oldest segments until <= %.1f%%",
+            usage.used / usage.total * 100, self.high_watermark_pct, self.low_watermark_pct,
+        )
+        deleted_any = False
+        for segment in self._iter_segments_oldest_first():
             usage = shutil.disk_usage(self.root)
+            if usage.used / usage.total * 100 <= self.low_watermark_pct:
+                break
+            if segment in active:
+                continue  # never delete a segment still being written
+            self._delete_segment(segment)
+            deleted_any = True
+        else:
+            log.warning("watermark cleanup ran out of deletable segments before reaching low watermark")
+
+        if deleted_any:
+            self._prune_empty_dirs()
+
+    def _iter_segments_oldest_first(self):
+        """Yield every completed segment file under self.root in chronological
+        (oldest-first) order, based on the YYYY-MM-DD/HH/N.mp4 layout — not
+        filesystem mtime."""
+        if not self.root.exists():
+            return
+        for day_dir in sorted(d for d in self.root.iterdir() if d.is_dir()):
+            for hour_dir in sorted(h for h in day_dir.iterdir() if h.is_dir()):
+                files = sorted(
+                    (f for f in hour_dir.iterdir() if f.suffix == ".mp4"),
+                    key=lambda f: int(f.stem) if f.stem.isdigit() else 0,
+                )
+                yield from files
+
+    def _delete_segment(self, segment: Path) -> None:
+        log.info("watermark cleanup: removing oldest segment %s", segment)
+        segment.unlink(missing_ok=True)
+        segment.with_suffix(".log").unlink(missing_ok=True)
+
+    def _prune_empty_dirs(self) -> None:
+        if not self.root.exists():
+            return
+        for day_dir in sorted(d for d in self.root.iterdir() if d.is_dir()):
+            for hour_dir in sorted(h for h in day_dir.iterdir() if h.is_dir()):
+                if not any(hour_dir.iterdir()):
+                    hour_dir.rmdir()
+            if not any(day_dir.iterdir()):
+                day_dir.rmdir()

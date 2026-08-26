@@ -44,7 +44,19 @@ class CameraConfig(BaseModel):
     bitrate_kbps: int = 200
     segment_seconds: int = 300
     overlap_seconds: int = 10
-    retention_days: int = 3
+
+    # Storage-usage-based cleanup (primary mechanism): once disk usage hits
+    # high_watermark_pct, the oldest completed segment files are deleted one
+    # at a time until usage drops back to low_watermark_pct. Self-adjusting —
+    # retention in days falls out of whatever bitrate/fps you've configured,
+    # rather than needing to be hand-tuned. See docs/recording.md.
+    high_watermark_pct: float = 90.0
+    low_watermark_pct: float = 80.0
+    # Optional hard ceiling independent of free space (e.g. for a privacy/
+    # legal reason to never keep footage past N days even if there's room).
+    # None (default) disables this — storage usage is the only thing that
+    # drives deletion.
+    retention_days: int | None = None
 
 
 class HubConfig(BaseModel):

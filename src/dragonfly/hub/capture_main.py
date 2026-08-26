@@ -72,6 +72,8 @@ def run() -> None:
             bitrate_kbps=cam.bitrate_kbps,
             segment_seconds=cam.segment_seconds,
             overlap_seconds=cam.overlap_seconds,
+            high_watermark_pct=cam.high_watermark_pct,
+            low_watermark_pct=cam.low_watermark_pct,
             retention_days=cam.retention_days,
         )
         for cam in config.cameras

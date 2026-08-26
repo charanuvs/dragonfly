@@ -37,11 +37,36 @@ in coverage, because the overlap absorbs it.
 
 ## Retention
 
-A background thread checks hourly: any `YYYY-MM-DD` folder older than
-`retention_days` gets deleted outright. As a safety net on top of that (in
-case actual bitrate runs higher than configured), if disk usage still climbs
-above 90%, the oldest remaining day gets removed regardless of
-`retention_days` — so a miscalibrated bitrate can't silently fill the drive.
+Cleanup is storage-usage-based, not a fixed day count: a background thread
+checks every couple of minutes (storage can fill quickly on a small drive),
+and once usage crosses `high_watermark_pct` (default 90%), it deletes the
+single oldest completed segment file, rechecks usage, and repeats — one file
+at a time — until usage drops back to `low_watermark_pct` (default 80%). The
+gap between the two watermarks exists so it doesn't thrash (delete one file,
+dip just under 90%, immediately need to delete again).
+
+Segments are walked oldest-first using their `YYYY-MM-DD/HH/N.mp4` layout
+(not filesystem mtime), and a segment that's still being actively written is
+never a deletion candidate. Deleting a whole segment file is a cheap
+metadata-only filesystem operation — no rewriting file contents — and since
+every segment starts on a fresh keyframe, nothing is ever left corrupt. This
+is effectively a ring buffer at segment granularity: the practical version of
+"truncate old footage as new footage comes in," since a true byte-level
+ring buffer isn't feasible for MP4 (or any GOP-based codec) — truncating
+from the front of a single growing file would mean rewriting the entire
+remaining file every time (filesystems have no cheap "remove from the
+front" operation) and would invalidate MP4's global frame index, which has
+to be rebuilt from scratch on every truncation.
+
+This means retention in days isn't configured directly — it falls out of
+whatever `bitrate_kbps`/`fps` you pick and how big your drive is (see the
+storage math below), and self-adjusts if you change either later.
+
+If you want a hard privacy/legal cutoff independent of free space — never
+keep footage past N days even if there's room — set `retention_days`; it
+runs as an extra, optional pass alongside the watermark cleanup. Leave it
+unset (the default) to let storage usage be the only thing that drives
+deletion.
 
 ## Storage math (why the defaults are what they are)
 
@@ -59,6 +84,11 @@ affect the bitrate you need for acceptable quality. For an **8GB USB drive**
 | 300 kbps | 3.2 GB | ~2.2 days |
 | 500 kbps | 5.4 GB | ~1.3 days |
 | 1000 kbps | 10.8 GB | <1 day |
+
+("Retention" above is illustrative — with watermark-based cleanup, actual
+retention is however many days it takes to fill the drive from
+`low_watermark_pct` to `high_watermark_pct`, which is a somewhat smaller
+window than 0-100%, but the same bitrate-vs-days relationship holds.)
 
 The honest takeaway: **8GB is genuinely small for continuous video**, even
 at low bitrate. 200 kbps at 10fps is watchable for "was someone there"
@@ -90,5 +120,6 @@ entirely waiting for a mount that'll never come.
 
 All of this is configurable per-camera in `config/dragonfly.yaml`
 (`fps`, `bitrate_kbps`, `segment_seconds`, `overlap_seconds`,
+`high_watermark_pct`, `low_watermark_pct`, and the optional
 `retention_days`) — adjust to trade off quality vs. retention as your
 storage situation changes.

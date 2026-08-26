@@ -24,12 +24,20 @@ cameras:
     timeout_s: 3
 
     # Recording — see docs/recording.md for the storage math behind these
-    # numbers. Tuned for an 8GB USB drive: ~200kbps -> ~2.2GB/day -> ~3 days
-    # of retention. Raise bitrate for better quality if you attach bigger
-    # storage; lower retention_days if you go the other way.
+    # numbers. Cleanup is storage-usage-based: once the drive hits
+    # high_watermark_pct, the oldest segment files get deleted one at a time
+    # until usage is back down to low_watermark_pct. Retention in days just
+    # falls out of whatever bitrate/fps you pick below and how big your
+    # drive is — no day count to hand-tune. Raise bitrate for better quality
+    # if you attach bigger storage.
     record: true
     fps: 10
     bitrate_kbps: 200
     segment_seconds: 300
     overlap_seconds: 10
-    retention_days: 3
+    high_watermark_pct: 90
+    low_watermark_pct: 80
+    # Optional hard ceiling independent of free space (e.g. privacy/legal —
+    # never keep footage past N days even if there's room). Leave unset to
+    # let storage usage be the only thing that drives deletion.
+    # retention_days: 30
