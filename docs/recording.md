@@ -154,14 +154,37 @@ boot), via a udev rule matching its filesystem UUID (the same UUID from
 ```bash
 sudo tee /etc/udev/rules.d/99-dragonfly-hdd.rules <<'EOF'
 SUBSYSTEM=="block", ENV{ID_FS_UUID}=="<uuid-from-blkid>", ACTION=="add", RUN+="/usr/bin/systemctl start mnt-dragonfly\x2dhdd.mount"
+SUBSYSTEM=="block", ENV{ID_FS_UUID}=="<uuid-from-blkid>", ACTION=="remove", RUN+="/usr/bin/umount -l /mnt/dragonfly-hdd"
 EOF
 sudo udevadm control --reload-rules
 ```
 
 Replace `<uuid-from-blkid>` with the actual UUID. `mnt-dragonfly\x2dhdd.mount`
 is the unit name systemd generates from the `/mnt/dragonfly-hdd` fstab entry
-(the escaped `\x2d` is a literal `-`) — this rule tells udev to ask systemd
-to (re-)mount it the instant the matching device shows up.
+(the escaped `\x2d` is a literal `-`) — the `add` rule tells udev to ask
+systemd to (re-)mount it the instant the matching device shows up.
+
+**The `remove` rule matters just as much, and is easy to overlook.** When a
+USB drive is physically yanked (rather than cleanly unmounted), the kernel
+keeps the mount entry in place — it just fails every I/O against it, and
+ext4 flags the mount `shutdown` after the first errors. Two consequences:
+
+- `os.path.ismount()` still returns **True**, so the recorder's mount check
+  doesn't notice a physical unplug at all. Detection falls to the write
+  failures instead (`write_failed` / `segment_failed`), which the monitor
+  loop reports within ~10s. That path works, but don't expect the mount
+  check to be what catches it.
+- Worse, that dead mount squats on `/mnt/dragonfly-hdd`. When the drive is
+  plugged back in it re-enumerates under a *new* device node (`/dev/sda1`
+  where it used to be `/dev/sdb1`), and the `add` rule's mount silently
+  fails because the mountpoint is already occupied. Recording then never
+  resumes — every write keeps hitting the zombie mount and returning EIO,
+  even though the drive is physically present and healthy.
+
+The `remove` rule's lazy unmount (`umount -l`) clears the dead mount as soon
+as the device disappears, leaving the mountpoint free so the `add` rule can
+mount the drive properly when it returns. Without it, recovery requires a
+manual `sudo umount -l /mnt/dragonfly-hdd && sudo mount -a`.
 
 **What happens on the capture side if the drive is unplugged:**
 `dragonfly-capture.service` has *no* systemd-level dependency on the mount
