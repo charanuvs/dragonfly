@@ -341,6 +341,14 @@ class SegmentedRecorder(SensorModule):
         while not self._stop.is_set():
             try:
                 self._run_cleanup()
+            except OSError:
+                # The drive can vanish mid-pass (unplugged between the mount
+                # check and a directory read), so I/O errors here are expected
+                # and unremarkable — log a one-liner rather than a full
+                # traceback, and just try again next pass.
+                log.warning(
+                    "cleanup pass skipped — storage unavailable (%s)", self.root, exc_info=False
+                )
             except Exception:
                 log.exception("cleanup pass failed")
             # Storage can fill quickly on a small drive, so this runs far more
@@ -349,6 +357,12 @@ class SegmentedRecorder(SensorModule):
                 break
 
     def _run_cleanup(self) -> None:
+        # Same guard as _launch_segment: without it, walking the recordings
+        # tree on a drive that's been unplugged raises EIO rather than simply
+        # finding nothing, which produced alarming tracebacks in the logs even
+        # though the recorder itself was healthy and retrying correctly.
+        if self.mount_point is not None and not os.path.ismount(self.mount_point):
+            return
         if not self.root.exists():
             return
         if self.retention_days is not None:
