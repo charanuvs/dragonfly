@@ -171,13 +171,24 @@ class SegmentedRecorder(SensorModule):
         # Explicit "stopped" event so the dashboard reflects a clean shutdown
         # immediately, rather than waiting for the last segment's start time
         # to just go stale.
-        self.publish("recording", json.dumps({"active": False, "stopped": time.time()}))
+        self._publish_recording_state(active=False, stopped=time.time())
         if self._record_thread:
             self._record_thread.join(timeout=5)
         if self._cleanup_thread:
             self._cleanup_thread.join(timeout=5)
         if self._monitor_thread:
             self._monitor_thread.join(timeout=5)
+
+    def _publish_recording_state(self, **fields) -> None:
+        """Publish current recording state, retained.
+
+        Retained so a portal process that starts (or restarts) later gets the
+        last-known state immediately from the broker, instead of showing
+        nothing until the next event — which, since these mostly fire at
+        segment boundaries, could otherwise be a full segment_seconds of the
+        dashboard showing "Not recording" while recording is running fine.
+        """
+        self.publish("recording", json.dumps(fields), retain=True)
 
     # -- recording --
 
@@ -219,10 +230,7 @@ class SegmentedRecorder(SensorModule):
                 "%s is not mounted — skipping this segment, will retry next scheduled segment",
                 self.mount_point,
             )
-            self.publish(
-                "recording",
-                json.dumps({"active": False, "error": "not_mounted", "ts": time.time()}),
-            )
+            self._publish_recording_state(active=False, error="not_mounted", ts=time.time())
             return
 
         cmd = [
@@ -264,16 +272,12 @@ class SegmentedRecorder(SensorModule):
                 "will retry next scheduled segment",
                 path, exc_info=True,
             )
-            self.publish(
-                "recording",
-                json.dumps({"active": False, "error": "write_failed", "ts": time.time()}),
-            )
+            self._publish_recording_state(active=False, error="write_failed", ts=time.time())
             return
         with self._lock:
             self._processes.append({"proc": proc, "log_f": log_f, "path": path})
-        self.publish(
-            "recording",
-            json.dumps({"active": True, "segment": str(path), "started": boundary_epoch}),
+        self._publish_recording_state(
+            active=True, segment=str(path), started=boundary_epoch
         )
 
     def _reap_finished(self) -> None:
@@ -293,16 +297,11 @@ class SegmentedRecorder(SensorModule):
                     # staleness timeout — a non-zero exit (e.g. write I/O error
                     # from the drive disappearing mid-segment) is a strong
                     # signal recording actually stopped, not just delayed.
-                    self.publish(
-                        "recording",
-                        json.dumps(
-                            {
-                                "active": False,
-                                "error": "segment_failed",
-                                "segment": str(entry["path"]),
-                                "ts": time.time(),
-                            }
-                        ),
+                    self._publish_recording_state(
+                        active=False,
+                        error="segment_failed",
+                        segment=str(entry["path"]),
+                        ts=time.time(),
                     )
             self._processes = still_running
 
@@ -333,10 +332,7 @@ class SegmentedRecorder(SensorModule):
                 "(will retry at the next scheduled segment)",
                 self.mount_point,
             )
-            self.publish(
-                "recording",
-                json.dumps({"active": False, "error": "not_mounted", "ts": time.time()}),
-            )
+            self._publish_recording_state(active=False, error="not_mounted", ts=time.time())
         self._last_known_mounted = currently_mounted
 
     # -- cleanup --

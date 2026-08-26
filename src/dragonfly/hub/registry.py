@@ -28,9 +28,26 @@ class DeviceRegistry:
     def __init__(self) -> None:
         self._modules: dict[str, ModuleStatus] = {}
 
-    def touch(self, module_id: str, module_type: str, online: bool = True) -> None:
+    def touch(
+        self,
+        module_id: str,
+        module_type: str,
+        online: bool = True,
+        last_seen: float | None = None,
+    ) -> None:
+        """Record a module's reported state.
+
+        `last_seen` should be the timestamp from the event payload, not the
+        time we received it. These events are published retained, so the
+        broker replays the last one to any subscriber that connects later —
+        stamping receive-time would make a stale retained heartbeat (e.g. from
+        a capture process that has since been killed) look brand new, and the
+        staleness checks in dashboard/app.py would never mark it offline.
+        """
         existing = self._modules.get(module_id)
         status = ModuleStatus(module_id=module_id, module_type=module_type, online=online)
+        if last_seen is not None:
+            status.last_seen = last_seen
         if existing is not None:
             # Preserve recording state — heartbeat and recording are reported
             # on independent schedules, so a heartbeat update shouldn't wipe

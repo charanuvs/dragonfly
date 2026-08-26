@@ -26,5 +26,5 @@ class SensorModule(ABC):
     def stop(self) -> None:
         """Cleanly release hardware resources."""
 
-    def publish(self, subtopic: str, payload: bytes | str) -> None:
-        self.bus.publish(self.module_id, subtopic, payload)
+    def publish(self, subtopic: str, payload: bytes | str, retain: bool = False) -> None:
+        self.bus.publish(self.module_id, subtopic, payload, retain=retain)

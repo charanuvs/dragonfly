@@ -61,7 +61,10 @@ class RtspCameraModule(SensorModule):
         while not self._stop.is_set():
             online = self._check_once()
             payload = json.dumps({"online": online, "type": self.module_type, "ts": time.time()})
-            self.publish("heartbeat", payload)
+            # Retained: this is state, so a portal starting later should learn
+            # online/offline immediately rather than after up to
+            # poll_interval_s of showing nothing.
+            self.publish("heartbeat", payload, retain=True)
             log.info("%s heartbeat: %s", self.module_id, "online" if online else "offline")
             self._stop.wait(self.poll_interval_s)
 

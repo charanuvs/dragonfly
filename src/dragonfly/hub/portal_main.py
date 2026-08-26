@@ -52,6 +52,9 @@ def run() -> None:
                 module_id,
                 data.get("type", "unknown"),
                 online=bool(data.get("online", False)),
+                # From the payload, not receive time — these are retained, so
+                # this may be a replayed message that's actually old.
+                last_seen=data.get("ts"),
             )
         elif subtopic == "recording":
             try:

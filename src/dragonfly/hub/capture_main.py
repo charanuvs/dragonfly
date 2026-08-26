@@ -132,6 +132,7 @@ def run() -> None:
                         "recorders": len(recorders),
                     }
                 ),
+                retain=True,
             )
             shutdown.wait(CAPTURE_HEALTH_INTERVAL_S)
 
@@ -151,6 +152,7 @@ def run() -> None:
             CAPTURE_HEALTH_MODULE_ID,
             "heartbeat",
             json.dumps({"type": "capture_process", "online": False, "ts": time.time()}),
+            retain=True,
         )
         bus.loop_stop()
 

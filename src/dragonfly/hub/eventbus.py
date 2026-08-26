@@ -40,8 +40,22 @@ class EventBus:
         """Register a callback invoked as handler(topic, payload) for every message."""
         self._handlers.append(handler)
 
-    def publish(self, module_id: str, subtopic: str, payload: bytes | str) -> None:
-        self._client.publish(f"{TOPIC_PREFIX}/{module_id}/{subtopic}", payload)
+    def publish(
+        self, module_id: str, subtopic: str, payload: bytes | str, retain: bool = False
+    ) -> None:
+        """Publish an event.
+
+        `retain=True` asks the broker to keep this as the last-known value for
+        the topic and replay it to any future subscriber the moment it
+        subscribes. Use it for *state* ("the camera is online", "recording is
+        active") — without it, a process that starts later (notably the portal,
+        which rebuilds its whole registry from these events) knows nothing
+        until the next event happens to fire, which for recording events can be
+        a full segment_seconds away. Don't use it for one-off *commands* like
+        live_start_request, where a replayed message on reconnect would
+        re-trigger an action nobody asked for.
+        """
+        self._client.publish(f"{TOPIC_PREFIX}/{module_id}/{subtopic}", payload, retain=retain)
 
     def loop_forever(self) -> None:
         self._client.loop_forever()
