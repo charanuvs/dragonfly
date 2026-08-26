@@ -166,14 +166,27 @@ without this check, `mkdir()` wouldn't fail when the drive isn't mounted,
 it would silently create directories on the underlying root filesystem (the
 SD card) instead of erroring, so recordings could quietly end up in the
 wrong place. If the mount isn't there, or if any other write failure
-occurs, it's reported over MQTT as "not recording" (shows up immediately on
-the dashboard) and retried on the next scheduled segment — never crashing
-the recording thread or needing capture to restart. Once the udev rule
-above remounts the drive, the next scheduled segment attempt succeeds and
-recording resumes automatically, reporting "active" again — usually within
-one `segment_seconds` interval (5 min by default) of the drive coming back.
-Heartbeat and live view are unaffected throughout, since they never
-depended on the drive in the first place.
+occurs, it's reported over MQTT as "not recording" and retried on the next
+scheduled segment — never crashing the recording thread or needing capture
+to restart.
+
+That check alone only runs once per segment (5 min by default), which
+means unplugging the drive *mid*-segment could leave the dashboard showing
+stale "Recording to disk" for nearly that whole interval before anything
+noticed. A separate monitor loop (`_MONITOR_INTERVAL_S`, 10s) runs
+independently of the segment schedule specifically to close that gap: it
+reaps finished ffmpeg processes promptly (a segment that crashes from a
+write error gets reported within ~10s, not at the next scheduled launch)
+and watches for the mount transitioning to unmounted, reporting "not
+recording" the moment either is detected — so the dashboard reflects
+reality within about `_MONITOR_INTERVAL_S`, not `segment_seconds`.
+
+Once the udev rule above remounts the drive, the next scheduled segment
+attempt succeeds and recording resumes automatically, reporting "active"
+again — that side is still on the `segment_seconds` schedule (resuming
+isn't as time-sensitive as detecting the outage was). Heartbeat and live
+view are unaffected throughout, since they never depended on the drive in
+the first place.
 
 Redeploy the unit file the normal way after pulling
 (`bash deploy/install_pi.sh` re-copies it, or manually

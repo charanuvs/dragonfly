@@ -37,6 +37,15 @@ raised. Either way it's reported over MQTT as "not recording" and retried
 on the next scheduled segment — never crashes the recording thread. This is
 deliberately just a recorder concern — heartbeat and live view run
 independently in the same process and are unaffected by a storage problem.
+
+Segment launches (and their checks) only happen once per segment_seconds,
+which would mean a drive unplugged *mid*-segment goes unnoticed for up to
+that whole interval. A separate monitor loop (`_monitor_loop`,
+`_MONITOR_INTERVAL_S`, 10s by default) runs independently of the segment
+schedule, reaping finished ffmpeg processes promptly (catching a crashed
+segment quickly rather than at the next scheduled launch) and watching for
+a mount-point transition to unmounted, reporting "not recording" the
+moment either is detected.
 Correspondingly, `dragonfly-capture.service` does not gate its own
 lifecycle on the drive being mounted at all (no RequiresMountsFor/BindsTo) —
 that turned out to still propagate a stop to the whole service once the
@@ -75,6 +84,14 @@ def compute_segment_path(dt: datetime, root: Path, segment_seconds: int) -> Path
 class SegmentedRecorder(SensorModule):
     module_type = "camera_recorder"
 
+    # How often the monitor loop reaps finished processes and checks for a
+    # mount-point transition, independent of segment_seconds. Segment
+    # launches (and their own checks) only happen once per segment_seconds
+    # (5 min by default) — without this, unplugging the drive mid-segment
+    # could leave the dashboard showing stale "Recording to disk" for
+    # nearly that whole interval before anything re-checked.
+    _MONITOR_INTERVAL_S = 10
+
     def __init__(
         self,
         module_id: str,
@@ -109,11 +126,16 @@ class SegmentedRecorder(SensorModule):
         self._stop = threading.Event()
         self._record_thread: threading.Thread | None = None
         self._cleanup_thread: threading.Thread | None = None
+        self._monitor_thread: threading.Thread | None = None
         # Each entry: {"proc": Popen, "log_f": file, "path": Path}. Tracked as
         # dicts (not just proc/log_f) so cleanup can cross-reference which
         # segment files are still being written and never delete one of those.
         self._processes: list[dict] = []
         self._lock = threading.Lock()
+        # None until the first check; tracks the mount's state as of the
+        # last monitor tick so a transition to unmounted is only reported
+        # once, not on every tick while it stays unmounted.
+        self._last_known_mounted: bool | None = None
 
     def start(self) -> None:
         if shutil.which("ffmpeg") is None:
@@ -133,6 +155,10 @@ class SegmentedRecorder(SensorModule):
             target=self._cleanup_loop, daemon=True, name=f"cleanup-{self.module_id}"
         )
         self._cleanup_thread.start()
+        self._monitor_thread = threading.Thread(
+            target=self._monitor_loop, daemon=True, name=f"monitor-{self.module_id}"
+        )
+        self._monitor_thread.start()
 
     def stop(self) -> None:
         self._stop.set()
@@ -150,6 +176,8 @@ class SegmentedRecorder(SensorModule):
             self._record_thread.join(timeout=5)
         if self._cleanup_thread:
             self._cleanup_thread.join(timeout=5)
+        if self._monitor_thread:
+            self._monitor_thread.join(timeout=5)
 
     # -- recording --
 
@@ -281,6 +309,35 @@ class SegmentedRecorder(SensorModule):
     def _active_paths(self) -> set[Path]:
         with self._lock:
             return {entry["path"] for entry in self._processes if entry["proc"].poll() is None}
+
+    # -- monitoring --
+
+    def _monitor_loop(self) -> None:
+        # Runs far more often than segment launches do, specifically so a
+        # drive disappearing mid-segment (rather than between segments)
+        # still gets reported quickly instead of leaving the dashboard
+        # showing stale "Recording to disk" for up to segment_seconds.
+        while not self._stop.is_set():
+            self._reap_finished()
+            self._check_mount_transition()
+            if self._stop.wait(self._MONITOR_INTERVAL_S):
+                break
+
+    def _check_mount_transition(self) -> None:
+        if self.mount_point is None:
+            return
+        currently_mounted = os.path.ismount(self.mount_point)
+        if self._last_known_mounted is not False and not currently_mounted:
+            log.warning(
+                "%s became unmounted — reporting not recording immediately "
+                "(will retry at the next scheduled segment)",
+                self.mount_point,
+            )
+            self.publish(
+                "recording",
+                json.dumps({"active": False, "error": "not_mounted", "ts": time.time()}),
+            )
+        self._last_known_mounted = currently_mounted
 
     # -- cleanup --
 
