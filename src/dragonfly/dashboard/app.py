@@ -172,7 +172,7 @@ _INDEX_HTML = """<!doctype html>
   <h1>Dragonfly</h1>
   <div id="sysbar" class="sysbar">Loading system stats&hellip;</div>
   <div class="history-card">
-    <div class="name">CPU / memory &mdash; live (since page opened)</div>
+    <div class="name">CPU / memory</div>
     <canvas id="historyChart" height="70"></canvas>
   </div>
   <div id="grid" class="grid"><p class="empty">Loading...</p></div>
