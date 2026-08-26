@@ -2,19 +2,25 @@
 Description=Dragonfly capture service (heartbeat, recorder, live-stream ffmpeg)
 After=network-online.target mosquitto.service mnt-dragonfly\x2dhdd.mount
 Wants=network-online.target
-# Refuse to start until the recordings drive is actually mounted here — this
-# only has an effect if /mnt/dragonfly-hdd has a real fstab entry (see
-# docs/recording.md); systemd derives the mnt-dragonfly\x2dhdd.mount unit
-# above from that entry automatically.
-RequiresMountsFor=/mnt/dragonfly-hdd
+# BindsTo (not just RequiresMountsFor) means this service is torn down
+# whenever the drive's mount unit goes away — e.g. the USB drive gets
+# unplugged mid-recording — instead of limping along with a dead recorder
+# thread. Combined with Restart=always below, systemd keeps retrying to
+# bring capture back up (which requires re-starting the mount too), so once
+# the drive is reconnected and remounted (see docs/recording.md for the
+# udev rule that auto-mounts it on plug-in), the next retry succeeds and
+# capture comes back with a fresh recording thread — no manual restart
+# needed.
+BindsTo=mnt-dragonfly\x2dhdd.mount
+After=mnt-dragonfly\x2dhdd.mount
 
 [Service]
 Type=simple
 User=charan
 WorkingDirectory=/home/charan/dragonfly
 ExecStart=/home/charan/dragonfly/.venv/bin/dragonfly-capture
-Restart=on-failure
-RestartSec=5
+Restart=always
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target

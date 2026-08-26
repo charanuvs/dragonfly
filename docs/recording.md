@@ -118,6 +118,41 @@ sudo mount -a                  # mounts it now and validates the fstab line
 `nofail` matters: without it, a missing/failed drive can hang the Pi's boot
 entirely waiting for a mount that'll never come.
 
+## Auto-mounting on plug-in, and auto-restarting capture
+
+The `/etc/fstab` entry above only gets applied at boot — if you unplug and
+replug the drive while Phila is already running, nothing remounts it
+automatically without the udev rule below, and `dragonfly-capture` won't
+pick a remount back up on its own either without the service change below.
+
+**1. Auto-mount whenever this specific drive is plugged in** (not just at
+boot), via a udev rule matching its filesystem UUID (the same UUID from
+`blkid` above):
+
+```bash
+sudo tee /etc/udev/rules.d/99-dragonfly-hdd.rules <<'EOF'
+SUBSYSTEM=="block", ENV{ID_FS_UUID}=="<uuid-from-blkid>", ACTION=="add", RUN+="/usr/bin/systemctl start mnt-dragonfly\x2dhdd.mount"
+EOF
+sudo udevadm control --reload-rules
+```
+
+Replace `<uuid-from-blkid>` with the actual UUID. `mnt-dragonfly\x2dhdd.mount`
+is the unit name systemd generates from the `/mnt/dragonfly-hdd` fstab entry
+(the escaped `\x2d` is a literal `-`) — this rule just tells udev to ask
+systemd to (re-)start that mount the instant the matching device shows up.
+
+**2. Auto-restart `dragonfly-capture` once the drive is back.**
+`deploy/dragonfly-capture.service` now uses `BindsTo=mnt-dragonfly\x2dhdd.mount`
+(instead of only `RequiresMountsFor`) plus `Restart=always`: unplugging the
+drive tears capture down instead of leaving it running with a dead recorder
+thread (see the "what happens if I disconnect storage" discussion — this is
+what fixes that), and systemd keeps retrying to bring it back up every
+`RestartSec` (10s). Once the udev rule above remounts the drive, the next
+retry succeeds and capture restarts cleanly with a fresh recording thread —
+no manual `systemctl restart` needed. Redeploy this updated unit file the
+normal way (`bash deploy/install_pi.sh` re-copies it, or manually
+`sudo cp deploy/dragonfly-capture.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl restart dragonfly-capture`).
+
 All of this is configurable per-camera in `config/dragonfly.yaml`
 (`fps`, `bitrate_kbps`, `segment_seconds`, `overlap_seconds`,
 `high_watermark_pct`, `low_watermark_pct`, and the optional
