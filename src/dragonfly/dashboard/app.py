@@ -166,27 +166,50 @@ _INDEX_HTML = """<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
+  <!-- viewport-fit=cover so the page extends under the notch/home indicator
+       on modern phones rather than being letterboxed by browser chrome. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#111">
+  <!-- Lets this be saved to a phone home screen and open chrome-less. -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Dragonfly</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #111; color: #eee; margin: 2rem; }
-    h1 { font-weight: 600; }
-    .grid { display: flex; flex-wrap: wrap; gap: 1rem; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #111; color: #eee; margin: 0;
+      padding: 1.5rem max(1.5rem, env(safe-area-inset-right))
+               max(1.5rem, env(safe-area-inset-bottom)) max(1.5rem, env(safe-area-inset-left));
+      -webkit-text-size-adjust: 100%;
+    }
+    h1 { font-weight: 600; font-size: 1.5rem; margin: 0 0 1rem; }
+    /* Auto-fitting columns: one per row on a phone, as many as fit on a
+       desktop, without hard-coding breakpoints per card count. */
+    .grid {
+      display: grid; gap: 1rem;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+    }
     .card {
       border: 1px solid #333; border-radius: 10px; padding: 1rem 1.25rem;
-      min-width: 220px; background: #1a1a1a;
+      background: #1a1a1a; min-width: 0;
     }
-    .card .name { font-size: 1.1rem; font-weight: 600; margin-bottom: .25rem; }
-    .card .id { color: #888; font-size: .8rem; margin-bottom: .75rem; }
+    .card .name { font-size: 1.1rem; font-weight: 600; margin-bottom: .5rem; }
     .status { display: flex; align-items: center; gap: .5rem; font-size: .95rem; }
-    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
     .dot.online { background: #2ecc71; box-shadow: 0 0 6px #2ecc71; }
     .dot.offline { background: #e74c3c; box-shadow: 0 0 6px #e74c3c; }
-    .meta { color: #888; font-size: .8rem; margin-top: .4rem; }
+    .meta {
+      color: #888; font-size: .8rem; margin-top: .4rem;
+      /* Long paths (segment filenames) must not stretch the card on a phone. */
+      overflow-wrap: anywhere;
+    }
     .empty { color: #888; }
     .sysbar {
-      display: flex; flex-wrap: wrap; gap: 1.5rem; align-items: center;
+      display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; align-items: center;
       background: #1a1a1a; border: 1px solid #333; border-radius: 10px;
-      padding: .6rem 1.25rem; margin-bottom: 1.25rem; font-size: .85rem; color: #ccc;
+      padding: .75rem 1.25rem; margin-bottom: 1.25rem; font-size: .85rem; color: #ccc;
     }
     .sysbar b { color: #eee; }
     .history-card {
@@ -194,6 +217,17 @@ _INDEX_HTML = """<!doctype html>
       background: #1a1a1a; margin-bottom: 1.25rem;
     }
     .history-card .name { font-size: 1.1rem; font-weight: 600; margin-bottom: .5rem; }
+    /* Comfortable tap target, and enough contrast to find one-handed. */
+    .card a { display: inline-block; padding: .35rem 0; }
+
+    @media (max-width: 600px) {
+      body { padding: 1rem max(1rem, env(safe-area-inset-right))
+                     max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)); }
+      h1 { font-size: 1.25rem; }
+      .card, .history-card, .sysbar { padding: .85rem 1rem; }
+      /* Each stat on its own line reads better than a wrapped run-on row. */
+      .sysbar { flex-direction: column; align-items: flex-start; gap: .35rem; }
+    }
   </style>
 </head>
 <body>
@@ -201,7 +235,11 @@ _INDEX_HTML = """<!doctype html>
   <div id="sysbar" class="sysbar">Loading system stats&hellip;</div>
   <div class="history-card">
     <div class="name">CPU / memory</div>
-    <canvas id="historyChart" height="70"></canvas>
+    <!-- Wrapper gives Chart.js a definite height to fill; without it,
+         responsive mode collapses the canvas on some mobile browsers. -->
+    <div style="position:relative; height:clamp(120px, 22vh, 200px)">
+      <canvas id="historyChart"></canvas>
+    </div>
   </div>
   <div id="grid" class="grid"><p class="empty">Loading...</p></div>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js"></script>
@@ -227,12 +265,15 @@ _INDEX_HTML = """<!doctype html>
         },
         options: {
           responsive: true,
+          // Fill the sized wrapper rather than holding a fixed aspect ratio,
+          // which on a narrow screen would make the chart absurdly short.
+          maintainAspectRatio: false,
           animation: false,
           scales: {
-            y: { min: 0, max: 100, ticks: { color: '#888' }, grid: { color: '#292929' } },
-            x: { ticks: { color: '#888', maxTicksLimit: 8 }, grid: { display: false } },
+            y: { min: 0, max: 100, ticks: { color: '#888', maxTicksLimit: 5 }, grid: { color: '#292929' } },
+            x: { ticks: { color: '#888', maxTicksLimit: 5, maxRotation: 0 }, grid: { display: false } },
           },
-          plugins: { legend: { labels: { color: '#ccc' } } },
+          plugins: { legend: { labels: { color: '#ccc', boxWidth: 12 } } },
         },
       });
     }
@@ -366,18 +407,44 @@ _LIVE_HTML = """<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#111">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Dragonfly &mdash; __CAMERA_ID__ live</title>
   <style>
-    body { background: #111; color: #eee; font-family: -apple-system, sans-serif; margin: 0; }
-    h1 { padding: 1rem; font-size: 1.1rem; }
-    h1 a { color: #4da3ff; text-decoration: none; font-size: .85rem; float: right; }
-    video { width: 100%; max-width: 1280px; display: block; margin: 0 auto; background: #000; }
-    .status { text-align: center; color: #888; font-size: .85rem; padding: .5rem; }
+    * { box-sizing: border-box; }
+    body {
+      background: #111; color: #eee; font-family: -apple-system, sans-serif; margin: 0;
+      padding-top: env(safe-area-inset-top);
+    }
+    header {
+      display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+      padding: .85rem 1rem;
+    }
+    h1 { font-size: 1.05rem; margin: 0; font-weight: 600; }
+    /* Generous tap target — the old float:right link was fiddly on a phone. */
+    header a {
+      color: #4da3ff; text-decoration: none; font-size: .9rem;
+      padding: .5rem .75rem; margin: -.5rem -.25rem -.5rem 0; flex: none;
+    }
+    video {
+      width: 100%; max-width: 1280px; display: block; margin: 0 auto;
+      background: #000;
+      /* Cap height in landscape so controls and status stay reachable
+         instead of the video pushing them off-screen. */
+      max-height: 78vh;
+    }
+    .status { text-align: center; color: #888; font-size: .85rem; padding: .75rem; }
   </style>
 </head>
 <body>
-  <h1>__CAMERA_ID__ &mdash; live <a href="/">&larr; back</a></h1>
-  <video id="v" controls autoplay muted playsinline></video>
+  <header>
+    <h1>__CAMERA_ID__ &mdash; live</h1>
+    <a href="/">&larr; back</a>
+  </header>
+  <video id="v" controls autoplay muted playsinline webkit-playsinline></video>
   <div class="status" id="status">connecting&hellip;</div>
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
   <script>
