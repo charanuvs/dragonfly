@@ -5,6 +5,7 @@ out from under it — never crashing the recording thread, always reporting
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from dragonfly.modules.camera.recorder import SegmentedRecorder
@@ -38,6 +39,25 @@ def test_launch_segment_failure_does_not_raise_and_reports_not_recording(tmp_pat
     assert data["active"] is False
     assert data["error"] == "write_failed"
     assert recorder._processes == []  # nothing was tracked as running
+
+
+def test_start_does_not_precreate_root_directory(tmp_path):
+    # Regression test: start() used to call self.root.mkdir() unconditionally
+    # before the record loop even began. If the drive wasn't mounted yet,
+    # that mkdir could raise (e.g. PermissionError against the bare
+    # mountpoint), which propagated out of start() entirely — the recorder
+    # never started at all, not even in a "will retry" state. Directory
+    # creation belongs solely to _launch_segment, which does it safely
+    # (after checking the mount) on each scheduled attempt.
+    fake_bus = MagicMock()
+    recorder = _make_recorder(tmp_path, fake_bus)
+
+    with patch("dragonfly.modules.camera.recorder.shutil.which", return_value="/usr/bin/ffmpeg"), \
+         patch("dragonfly.modules.camera.recorder.threading.Thread") as mock_thread, \
+         patch.object(Path, "mkdir", side_effect=AssertionError("start() must not create directories itself")):
+        recorder.start()  # must not raise
+
+    assert mock_thread.call_count == 2  # record thread + cleanup thread, both constructed
 
 
 def test_launch_segment_skips_write_when_mount_point_not_mounted(tmp_path):

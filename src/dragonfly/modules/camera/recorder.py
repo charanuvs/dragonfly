@@ -118,7 +118,13 @@ class SegmentedRecorder(SensorModule):
     def start(self) -> None:
         if shutil.which("ffmpeg") is None:
             raise RuntimeError("ffmpeg not found on PATH — install it (apt install ffmpeg)")
-        self.root.mkdir(parents=True, exist_ok=True)
+        # Deliberately no self.root.mkdir() here: at startup the drive may
+        # not be mounted yet (or ever), and creating it unconditionally is
+        # exactly the unprotected filesystem call we've been removing
+        # elsewhere — it can raise (e.g. PermissionError against the bare
+        # mountpoint) and take the whole recorder down before the record
+        # loop even begins. _launch_segment already creates whatever
+        # directories it needs, safely, after checking the mount is present.
         self._record_thread = threading.Thread(
             target=self._record_loop, daemon=True, name=f"recorder-{self.module_id}"
         )
