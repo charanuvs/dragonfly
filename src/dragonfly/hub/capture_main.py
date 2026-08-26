@@ -11,9 +11,11 @@ never interrupts an in-progress recording, and vice versa.
 """
 from __future__ import annotations
 
+import json
 import logging
 import signal
 import threading
+import time
 
 from dragonfly.dashboard.live import LiveStreamManager
 from dragonfly.hub.config import load_config
@@ -23,6 +25,15 @@ from dragonfly.modules.camera.rtsp_camera import RtspCameraModule
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("dragonfly.capture")
+
+# Pseudo module-id (not a real camera) capture uses to report its own
+# liveness, reusing the existing heartbeat mechanism/UI — so a fully-dead
+# capture process shows up on the dashboard as its own card, instead of only
+# being inferable from every camera's heartbeat/recording status going
+# stale at once. Portal applies the same staleness check to this as any
+# other heartbeat (see dashboard/app.py).
+CAPTURE_HEALTH_MODULE_ID = "_capture"
+CAPTURE_HEALTH_INTERVAL_S = 15
 
 
 def run() -> None:
@@ -104,6 +115,27 @@ def run() -> None:
     signal.signal(signal.SIGTERM, lambda *_: shutdown.set())
     signal.signal(signal.SIGINT, lambda *_: shutdown.set())
 
+    def _health_loop() -> None:
+        start_ts = time.time()
+        while not shutdown.is_set():
+            bus.publish(
+                CAPTURE_HEALTH_MODULE_ID,
+                "heartbeat",
+                json.dumps(
+                    {
+                        "type": "capture_process",
+                        "online": True,
+                        "ts": time.time(),
+                        "uptime_s": round(time.time() - start_ts, 1),
+                        "cameras": len(camera_modules),
+                        "recorders": len(recorders),
+                    }
+                ),
+            )
+            shutdown.wait(CAPTURE_HEALTH_INTERVAL_S)
+
+    threading.Thread(target=_health_loop, daemon=True, name="capture-health").start()
+
     try:
         shutdown.wait()
     finally:
@@ -112,6 +144,13 @@ def run() -> None:
         for rec in recorders:
             rec.stop()
         live_manager.stop_all()
+        # Explicit "going offline" so the dashboard reflects a clean shutdown
+        # immediately rather than waiting ~3x the health interval to go stale.
+        bus.publish(
+            CAPTURE_HEALTH_MODULE_ID,
+            "heartbeat",
+            json.dumps({"type": "capture_process", "online": False, "ts": time.time()}),
+        )
         bus.loop_stop()
 
 

@@ -37,6 +37,13 @@ app.state.storage_path = "/"
 app.state.event_bus = None
 app.state.live_dir = Path("/tmp/dragonfly-live")
 
+# Mirrors hub/capture_main.py's CAPTURE_HEALTH_MODULE_ID / _INTERVAL_S — the
+# pseudo module-id capture uses to report its own process-level liveness,
+# and the staleness grace applied to any heartbeat-based module that isn't a
+# configured camera (so it doesn't have a poll_interval_s of its own).
+_CAPTURE_HEALTH_MODULE_ID = "_capture"
+_DEFAULT_STALE_GRACE_S = 45
+
 
 @app.get("/health")
 def health() -> dict[str, str]:
@@ -55,6 +62,20 @@ def list_modules(request: Request) -> list[dict]:
     for status in registry.all():
         meta = camera_config.get(status.module_id)
 
+        # A module is only "online" if we've heard from it recently — a
+        # frozen last-known-true heartbeat (e.g. the whole capture process
+        # died) shouldn't show green forever. Cameras have their own
+        # poll_interval_s to size the grace period against; anything else
+        # (e.g. capture's own process-health heartbeat) uses a flat default.
+        online = status.online
+        stale_after = meta.poll_interval_s * 3 + 10 if meta else _DEFAULT_STALE_GRACE_S
+        if online and (now - status.last_seen) > stale_after:
+            online = False
+
+        name = meta.name if meta else (
+            "Capture process" if status.module_id == _CAPTURE_HEALTH_MODULE_ID else status.module_id
+        )
+
         # A recorder is only really "active" if we've heard from it recently.
         # It publishes on every segment launch (every segment_seconds); if
         # capture crashed without a clean stop, the last "active: true" event
@@ -71,8 +92,8 @@ def list_modules(request: Request) -> list[dict]:
             {
                 "module_id": status.module_id,
                 "module_type": status.module_type,
-                "name": meta.name if meta else status.module_id,
-                "online": status.online,
+                "name": name,
+                "online": online,
                 "last_seen": status.last_seen,
                 "seconds_since_seen": round(now - status.last_seen, 1),
                 "recording_enabled": bool(meta.record) if meta else False,

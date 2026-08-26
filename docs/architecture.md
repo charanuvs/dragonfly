@@ -64,6 +64,13 @@ recorders, and the live-view ffmpeg manager (below). Publishes
 heartbeat/recording events to MQTT; has no HTTP server and no direct
 knowledge of the dashboard. Run under systemd as `dragonfly-capture.service`.
 
+Capture also publishes its own process-level heartbeat every
+`CAPTURE_HEALTH_INTERVAL_S` (15s), under a pseudo module-id (`_capture`, not
+a real camera). This reuses the existing heartbeat plumbing/UI, so if
+capture itself dies entirely — not just a single camera going unreachable —
+that shows up on the dashboard as its own card going stale/offline, rather
+than only being inferable from every camera's status going stale at once.
+
 ### Portal process (`hub/portal_main.py`, console script `dragonfly-portal`)
 
 Serves the web dashboard (FastAPI/uvicorn). Has no direct reference to any
