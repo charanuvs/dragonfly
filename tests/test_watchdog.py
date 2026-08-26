@@ -186,6 +186,71 @@ def test_watchdog_marks_recording_inactive_when_storage_unhealthy(tmp_path):
     assert registry.get("OW").recording_active is False
 
 
+def test_watchdog_repairs_unhealthy_storage_and_rechecks(tmp_path):
+    registry = DeviceRegistry()
+    wd = Watchdog(_config(tmp_path), registry, bus=None)
+    # Unmounted on the first check, mounted on the recheck after repair —
+    # i.e. the repair worked and the card should show healthy, not broken.
+    with patch("dragonfly.watchdog.checks.socket.create_connection"), \
+         patch("dragonfly.watchdog.checks.os.path.ismount", side_effect=[False, True]), \
+         patch("dragonfly.watchdog.monitor.repair_storage") as repair, \
+         patch("dragonfly.watchdog.checks.subprocess.run") as run:
+        run.return_value = MagicMock(returncode=0, stdout="active", stderr="")
+        repair.return_value = {"ok": True, "output": "remounted"}
+        wd.run_once()
+
+    repair.assert_called_once()
+    assert registry.get("_storage").online is True
+
+
+def test_watchdog_repair_is_rate_limited(tmp_path):
+    wd = Watchdog(_config(tmp_path), DeviceRegistry(), bus=None)
+    with patch("dragonfly.watchdog.checks.socket.create_connection"), \
+         patch("dragonfly.watchdog.checks.os.path.ismount", return_value=False), \
+         patch("dragonfly.watchdog.monitor.repair_storage") as repair, \
+         patch("dragonfly.watchdog.checks.subprocess.run") as run:
+        run.return_value = MagicMock(returncode=0, stdout="active", stderr="")
+        repair.return_value = {"ok": False, "error": "no drive"}
+        wd.run_once()
+        wd.run_once()
+        wd.run_once()
+
+    assert repair.call_count == 1  # subsequent passes suppressed
+
+
+def test_watchdog_does_not_repair_when_disabled(tmp_path):
+    config = _config(tmp_path)
+    config.watchdog.repair_storage = False
+    wd = Watchdog(config, DeviceRegistry(), bus=None)
+    with patch("dragonfly.watchdog.checks.socket.create_connection"), \
+         patch("dragonfly.watchdog.checks.os.path.ismount", return_value=False), \
+         patch("dragonfly.watchdog.monitor.repair_storage") as repair, \
+         patch("dragonfly.watchdog.checks.subprocess.run") as run:
+        run.return_value = MagicMock(returncode=0, stdout="active", stderr="")
+        wd.run_once()
+
+    repair.assert_not_called()
+
+
+def test_watchdog_does_not_repair_a_merely_full_disk(tmp_path):
+    # Full is readable and mounted — repair can't help, and running umount
+    # against a working drive mid-recording would be actively harmful.
+    fake = os.statvfs("/")
+    wd = Watchdog(_config(tmp_path), DeviceRegistry(), bus=None)
+    with patch("dragonfly.watchdog.checks.socket.create_connection"), \
+         patch("dragonfly.watchdog.checks.os.path.ismount", return_value=True), \
+         patch("dragonfly.watchdog.checks.os.statvfs") as statvfs, \
+         patch("dragonfly.watchdog.monitor.repair_storage") as repair, \
+         patch("dragonfly.watchdog.checks.subprocess.run") as run:
+        run.return_value = MagicMock(returncode=0, stdout="active", stderr="")
+        statvfs.return_value = type(
+            "S", (), {"f_blocks": 100, "f_frsize": fake.f_frsize, "f_bavail": 1}
+        )()
+        wd.run_once()
+
+    repair.assert_not_called()
+
+
 def test_watchdog_publishes_retained(tmp_path):
     bus = MagicMock()
     wd = Watchdog(_config(tmp_path, record=False), DeviceRegistry(), bus=bus)

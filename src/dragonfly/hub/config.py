@@ -80,6 +80,16 @@ class WatchdogConfig(BaseModel):
     # be before recording is judged stopped.
     recording_grace_s: float = 60.0
 
+    # When storage is found unmounted or unreadable, try to repair it by
+    # running this (via sudo — see deploy/install_pi.sh, which installs it
+    # root-owned in /usr/local/sbin with a narrowly-scoped sudoers rule).
+    # Set repair_storage: false to disable and handle mounts manually.
+    repair_storage: bool = True
+    repair_command: str = "/usr/local/sbin/dragonfly-mount-repair"
+    # Don't hammer it — a drive that's genuinely absent can't be repaired,
+    # and retrying every pass would just spam logs and spin up processes.
+    repair_min_interval_s: float = 60.0
+
 
 class HubConfig(BaseModel):
     mqtt: MqttConfig = MqttConfig()

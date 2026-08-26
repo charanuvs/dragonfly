@@ -35,10 +35,28 @@ echo "== Installing systemd services =="
 sudo cp deploy/dragonfly-capture.service /etc/systemd/system/dragonfly-capture.service
 sudo cp deploy/dragonfly-portal.service /etc/systemd/system/dragonfly-portal.service
 
-# Mount watchdog: clears the dead mount left behind when the recordings
-# drive is physically unplugged, so it remounts cleanly when plugged back
-# in and recording resumes by itself. See docs/recording.md.
-chmod +x deploy/dragonfly-mount-watchdog.sh
+# Mount repair: clears the dead mount left behind when the recordings drive
+# is physically unplugged, so it remounts cleanly when plugged back in and
+# recording resumes by itself. See docs/recording.md.
+#
+# Installed to /usr/local/sbin root-owned, NOT run from the repo checkout.
+# That matters: the sudoers rule below lets the unprivileged portal user run
+# it without a password, so if the script lived somewhere that user could
+# edit, the rule would amount to passwordless root.
+sudo install -o root -g root -m 755 \
+    deploy/dragonfly-mount-watchdog.sh /usr/local/sbin/dragonfly-mount-repair
+
+# Scoped to exactly this one command, no arguments accepted.
+sudo tee /etc/sudoers.d/dragonfly-mount-repair >/dev/null <<EOF
+$(whoami) ALL=(root) NOPASSWD: /usr/local/sbin/dragonfly-mount-repair
+EOF
+sudo chmod 440 /etc/sudoers.d/dragonfly-mount-repair
+# Reject a malformed sudoers file rather than leaving sudo broken.
+sudo visudo -cf /etc/sudoers.d/dragonfly-mount-repair
+
+# Timer stays as a backstop for when portal itself isn't running (the
+# watchdog lives inside portal, so it can't repair anything while portal is
+# down — e.g. a reboot where the drive comes back before portal does).
 sudo cp deploy/dragonfly-mount-watchdog.service /etc/systemd/system/dragonfly-mount-watchdog.service
 sudo cp deploy/dragonfly-mount-watchdog.timer /etc/systemd/system/dragonfly-mount-watchdog.timer
 

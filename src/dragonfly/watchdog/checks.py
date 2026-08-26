@@ -144,6 +144,35 @@ def check_service(service_name: str) -> dict:
         return {"online": False, "service": service_name, "error": str(exc)}
 
 
+def repair_storage(command: str, timeout_s: float = 60.0) -> dict:
+    """Attempt to repair the recordings mount (via sudo).
+
+    The heavy lifting is in the shell script this points at — it clears a
+    dead mount with `umount -l` and re-runs `mount -a`. It needs root, and
+    the watchdog runs unprivileged inside portal, hence sudo with a sudoers
+    rule scoped to exactly this one command. `install_pi.sh` places the
+    script root-owned under /usr/local/sbin deliberately: if it lived in the
+    user-writable repo checkout, a NOPASSWD sudo rule pointing at it would
+    effectively be passwordless root for that user.
+    """
+    try:
+        proc = subprocess.run(
+            ["sudo", "-n", command],
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+        )
+        return {
+            "ok": proc.returncode == 0,
+            "returncode": proc.returncode,
+            "output": (proc.stdout + proc.stderr).strip()[-400:],
+        }
+    except FileNotFoundError:
+        return {"ok": False, "error": "sudo_or_command_not_found"}
+    except subprocess.SubprocessError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 def human_bytes(n: float) -> str:
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if abs(n) < 1024:
@@ -157,5 +186,6 @@ __all__ = [
     "check_storage",
     "check_recording",
     "check_service",
+    "repair_storage",
     "human_bytes",
 ]

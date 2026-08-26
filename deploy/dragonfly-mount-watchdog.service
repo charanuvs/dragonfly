@@ -7,4 +7,4 @@ Type=oneshot
 # Root: umount/mount require privileges. This is why the check lives here
 # rather than inside dragonfly-capture, which runs unprivileged as charan.
 User=root
-ExecStart=/home/charan/dragonfly/deploy/dragonfly-mount-watchdog.sh
+ExecStart=/usr/local/sbin/dragonfly-mount-repair

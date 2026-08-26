@@ -28,6 +28,12 @@ watchdog:
   storage_full_pct: 95        # storage counts as unhealthy at/above this
   recording_grace_s: 60       # slack past a segment's length before
                               # recording is judged stopped
+  # Auto-repair a dead/missing mount (clears a zombie mount, re-runs
+  # mount -a). Runs via sudo against a root-owned script installed by
+  # install_pi.sh. Set false to handle mounts yourself.
+  repair_storage: true
+  repair_command: /usr/local/sbin/dragonfly-mount-repair
+  repair_min_interval_s: 60
 
 cameras:
   - id: OW

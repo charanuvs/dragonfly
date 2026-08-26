@@ -193,22 +193,46 @@ A udev `ACTION=="remove"` rule to unmount on unplug was the obvious fix and
 `ENV{ID_FS_UUID}` generally isn't available to match on and the rule
 silently never fires.
 
-So this is handled by a small root-owned watchdog instead
-(`deploy/dragonfly-mount-watchdog.sh`, run every 30s by
-`dragonfly-mount-watchdog.timer`, installed by `install_pi.sh`). Every tick
-it probes the mountpoint with `stat -f` — a cheap read-only liveness check
-that succeeds on a healthy mount and fails with EIO on a dead one, without
-writing anything or walking directories that might disturb an in-progress
-recording. If the mount is dead it does `umount -l` (lazy, since ffmpeg may
-still hold the doomed path open) followed by `mount -a`, which picks the
-drive up under whatever device node it came back as.
+So this is handled in application code instead, by a repair script
+(`deploy/dragonfly-mount-watchdog.sh`) that probes the mountpoint with
+`stat -f` — a cheap read-only liveness check that succeeds on a healthy
+mount and fails with EIO on a dead one, without writing anything or walking
+directories that might disturb an in-progress recording. If the mount is
+dead it does `umount -l` (lazy, since ffmpeg may still hold the doomed path
+open) followed by `mount -a`, which picks the drive up under whatever device
+node it came back as.
+
+It gets invoked from two places, deliberately:
+
+- **The watchdog** (`watchdog/monitor.py`), whenever its storage check comes
+  back unmounted or unreadable. This is the main path — the same component
+  that reports storage health also fixes it, and re-checks immediately after
+  so the dashboard shows the repaired state rather than looking broken for
+  another pass. Rate-limited to one attempt per `repair_min_interval_s`
+  (60s), since a drive that's genuinely unplugged can't be repaired and
+  retrying every pass would just churn. It deliberately does *not* fire for
+  a merely **full** disk: that's mounted and readable, so unmounting it
+  would be actively harmful, and the recorder's watermark cleanup is what
+  handles that case.
+- **`dragonfly-mount-watchdog.timer`**, every 30s, as a backstop for when
+  portal isn't running — the watchdog lives inside portal, so it can't
+  repair anything while portal is down (e.g. a reboot where the drive
+  reappears before portal starts).
+
+The watchdog runs unprivileged (inside portal, as your normal user) but
+`umount`/`mount` need root, so `install_pi.sh` installs the script
+**root-owned at `/usr/local/sbin/dragonfly-mount-repair`** with a
+`/etc/sudoers.d` rule scoped to exactly that one command. Installing it
+outside the repo checkout is the point: a NOPASSWD sudo rule aimed at a
+script the invoking user can edit is effectively passwordless root.
 
 Net effect: unplug the drive and recording stops with an accurate "not
-recording" on the dashboard; plug it back in and within ~30s the mount is
+recording" on the dashboard; plug it back in and within ~15-30s the mount is
 repaired, then recording resumes at the next scheduled segment — with no
 manual `umount`/`mount` and no service restart. Check on it with:
 
 ```bash
+journalctl -u dragonfly-portal -n 30    # watchdog checks + repair attempts
 systemctl list-timers dragonfly-mount-watchdog.timer
 journalctl -u dragonfly-mount-watchdog -n 20
 ```
