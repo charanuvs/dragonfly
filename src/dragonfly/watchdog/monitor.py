@@ -115,32 +115,40 @@ class Watchdog:
 
         for cam in self.config.cameras:
             camera = check_camera(cam.rtsp_url, timeout_s=cam.timeout_s)
-            self._report(cam.id, "camera", camera, now)
+            recording: dict | None = None
 
-            if not cam.record:
-                continue
-            # Only meaningful if storage is actually readable; otherwise the
-            # scan itself would error and we'd report "no recordings" for
-            # what is really a storage problem, already reported above.
-            if not storage.get("healthy"):
-                self.registry.touch_recording(
-                    cam.id, active=False, segment=None, ts=now
+            if cam.record:
+                # Only meaningful if storage is actually readable; otherwise
+                # the scan itself would error and we'd report "no recordings"
+                # for what is really a storage problem, already reported above.
+                if not storage.get("healthy"):
+                    self.registry.touch_recording(
+                        cam.id, active=False, segment=None, ts=now
+                    )
+                else:
+                    recording = check_recording(
+                        self.config.storage.recordings_path,
+                        cam.id,
+                        segment_seconds=cam.segment_seconds,
+                        grace_s=self.config.watchdog.recording_grace_s,
+                    )
+                    self.registry.touch_recording(
+                        cam.id,
+                        active=bool(recording.get("active")),
+                        segment=recording.get("newest_segment"),
+                        ts=now,
+                    )
+                    self._publish(cam.id, "recording_verified", recording)
+
+            # Report the camera last, folding in what the recording check
+            # found (which file, how big, how fresh) so the card can show the
+            # file currently being written rather than just "recording".
+            details = dict(camera)
+            if recording is not None:
+                details.update(
+                    {k: v for k, v in recording.items() if k not in ("active", "root")}
                 )
-                continue
-
-            recording = check_recording(
-                self.config.storage.recordings_path,
-                cam.id,
-                segment_seconds=cam.segment_seconds,
-                grace_s=self.config.watchdog.recording_grace_s,
-            )
-            self.registry.touch_recording(
-                cam.id,
-                active=bool(recording.get("active")),
-                segment=recording.get("newest_segment"),
-                ts=now,
-            )
-            self._publish(cam.id, "recording_verified", recording)
+            self._report(cam.id, "camera", details, now)
 
     def _maybe_repair_storage(self, now: float) -> dict | None:
         cfg = self.config.watchdog

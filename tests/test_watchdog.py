@@ -173,6 +173,28 @@ def test_watchdog_pass_populates_registry(tmp_path):
     assert "used_pct" in registry.get("_storage").details
 
 
+def test_watchdog_reports_current_file_on_the_camera(tmp_path):
+    # The card shows which file is being written, so the camera's details
+    # have to carry it — not just the separate recording_verified topic.
+    registry = DeviceRegistry()
+    seg = tmp_path / "OW" / "2026-08-25" / "23" / "7.mp4"
+    seg.parent.mkdir(parents=True)
+    seg.write_bytes(b"x" * 2048)
+
+    wd = Watchdog(_config(tmp_path), registry, bus=None)
+    with patch("dragonfly.watchdog.checks.socket.create_connection"), \
+         patch("dragonfly.watchdog.checks.os.path.ismount", return_value=True), \
+         patch("dragonfly.watchdog.checks.subprocess.run") as run:
+        run.return_value = MagicMock(returncode=0, stdout="active", stderr="")
+        wd.run_once()
+
+    details = registry.get("OW").details
+    assert details["newest_segment"].endswith("2026-08-25/23/7.mp4")
+    assert details["newest_size_bytes"] == 2048
+    assert "newest_age_s" in details
+    assert registry.get("OW").recording_last_segment.endswith("7.mp4")
+
+
 def test_watchdog_marks_recording_inactive_when_storage_unhealthy(tmp_path):
     registry = DeviceRegistry()
     wd = Watchdog(_config(tmp_path), registry, bus=None)

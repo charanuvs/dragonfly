@@ -219,6 +219,11 @@ _INDEX_HTML = """<!doctype html>
     .history-card .name { font-size: 1.1rem; font-weight: 600; margin-bottom: .5rem; }
     /* Comfortable tap target, and enough contrast to find one-handed. */
     .card a { display: inline-block; padding: .35rem 0; }
+    .meta.file { color: #aaa; }
+    .filename {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: .78rem; color: #ddd;
+    }
 
     @media (max-width: 600px) {
       body { padding: 1rem max(1rem, env(safe-area-inset-right))
@@ -349,9 +354,19 @@ _INDEX_HTML = """<!doctype html>
       if (typeof v === 'boolean') return v ? 'yes' : 'no';
       return String(v);
     }
-    function renderDetails(details) {
+    // Shown on their own line under the recording status, so don't repeat
+    // them in the generic details list below it.
+    const RECORDING_DETAIL_KEYS = ['newest_segment', 'newest_size_bytes', 'newest_age_s'];
+
+    // <date>/<hour>/<n>.mp4 — enough to locate the file on disk without
+    // the full mount path eating the card.
+    function segmentLabel(path) {
+      return String(path).split('/').slice(-3).join('/');
+    }
+
+    function renderDetails(details, skip = []) {
       if (!details) return '';
-      const keys = Object.keys(details).sort((a, b) => {
+      const keys = Object.keys(details).filter(k => !skip.includes(k)).sort((a, b) => {
         const ia = DETAIL_ORDER.indexOf(a), ib = DETAIL_ORDER.indexOf(b);
         return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
       });
@@ -386,12 +401,20 @@ _INDEX_HTML = """<!doctype html>
             <span class="dot ${m.recording_active ? 'online' : 'offline'}"></span>
             ${m.recording_active ? 'Recording to disk' : 'Not recording'}
           </div>
+          ${m.recording_last_segment ? `
+          <div class="meta file">
+            <span class="filename">${segmentLabel(m.recording_last_segment)}</span>
+            ${m.details && m.details.newest_size_bytes
+              ? ` &middot; ${fmtBytes(m.details.newest_size_bytes)}` : ''}
+            ${m.details && m.details.newest_age_s !== undefined
+              ? ` &middot; written ${formatAgo(m.details.newest_age_s)} ago` : ''}
+          </div>` : ''}
           <div class="meta">
             ${m.recording_seconds_since_event !== null
               ? `verified ${formatAgo(m.recording_seconds_since_event)} ago`
               : 'no recording activity yet'}
           </div>` : ''}
-          ${renderDetails(m.details)}
+          ${renderDetails(m.details, RECORDING_DETAIL_KEYS)}
           ${m.module_type.includes('camera') && m.module_id.charAt(0) !== '_'
             ? `<div class="meta"><a href="/live/${m.module_id}" style="color:#4da3ff">Live view &rarr;</a></div>` : ''}
         </div>
