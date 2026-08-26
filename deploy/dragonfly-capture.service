@@ -5,12 +5,14 @@ Wants=network-online.target
 # BindsTo (not just RequiresMountsFor) means this service is torn down
 # whenever the drive's mount unit goes away — e.g. the USB drive gets
 # unplugged mid-recording — instead of limping along with a dead recorder
-# thread. Combined with Restart=always below, systemd keeps retrying to
-# bring capture back up (which requires re-starting the mount too), so once
-# the drive is reconnected and remounted (see docs/recording.md for the
-# udev rule that auto-mounts it on plug-in), the next retry succeeds and
-# capture comes back with a fresh recording thread — no manual restart
-# needed.
+# thread. NOTE: Restart=always below does NOT bring it back on its own —
+# a BindsTo-triggered stop is a clean/intentional stop as far as systemd's
+# Restart= logic is concerned, not a failure, so it won't retry (confirmed:
+# `systemctl status` just sits at inactive/dead indefinitely after this).
+# It's the udev rule in docs/recording.md that actually restarts this
+# service, by explicitly `systemctl start`ing it the instant the drive is
+# plugged back in and remounted. Restart=always is still useful here for a
+# genuine crash of the capture process unrelated to the drive.
 BindsTo=mnt-dragonfly\x2dhdd.mount
 After=mnt-dragonfly\x2dhdd.mount
 

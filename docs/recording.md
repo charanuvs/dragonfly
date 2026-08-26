@@ -131,25 +131,36 @@ boot), via a udev rule matching its filesystem UUID (the same UUID from
 
 ```bash
 sudo tee /etc/udev/rules.d/99-dragonfly-hdd.rules <<'EOF'
-SUBSYSTEM=="block", ENV{ID_FS_UUID}=="<uuid-from-blkid>", ACTION=="add", RUN+="/usr/bin/systemctl start mnt-dragonfly\x2dhdd.mount"
+SUBSYSTEM=="block", ENV{ID_FS_UUID}=="<uuid-from-blkid>", ACTION=="add", RUN+="/usr/bin/systemctl start mnt-dragonfly\x2dhdd.mount", RUN+="/usr/bin/systemctl start dragonfly-capture.service"
 EOF
 sudo udevadm control --reload-rules
 ```
 
 Replace `<uuid-from-blkid>` with the actual UUID. `mnt-dragonfly\x2dhdd.mount`
 is the unit name systemd generates from the `/mnt/dragonfly-hdd` fstab entry
-(the escaped `\x2d` is a literal `-`) — this rule just tells udev to ask
-systemd to (re-)start that mount the instant the matching device shows up.
+(the escaped `\x2d` is a literal `-`) — this rule tells udev, the instant the
+matching device shows up, to (re-)start both the mount *and* capture
+directly — see why both are needed below.
 
 **2. Auto-restart `dragonfly-capture` once the drive is back.**
-`deploy/dragonfly-capture.service` now uses `BindsTo=mnt-dragonfly\x2dhdd.mount`
-(instead of only `RequiresMountsFor`) plus `Restart=always`: unplugging the
-drive tears capture down instead of leaving it running with a dead recorder
-thread (see the "what happens if I disconnect storage" discussion — this is
-what fixes that), and systemd keeps retrying to bring it back up every
-`RestartSec` (10s). Once the udev rule above remounts the drive, the next
-retry succeeds and capture restarts cleanly with a fresh recording thread —
-no manual `systemctl restart` needed. Redeploy this updated unit file the
+`deploy/dragonfly-capture.service` uses `BindsTo=mnt-dragonfly\x2dhdd.mount`
+(instead of only `RequiresMountsFor`): unplugging the drive tears capture
+down cleanly instead of leaving it running with a dead recorder thread (see
+the "what happens if I disconnect storage" discussion — this is what fixes
+that).
+
+Important nuance: `Restart=always` does **not** bring capture back on its
+own here. `BindsTo=` stopping a unit counts as a clean, intentional stop
+(systemd logs "Stopping... / Deactivated successfully"), and systemd's
+`Restart=` policies — even `always` — don't kick in after a stop like that,
+only after the process actually crashes/exits unexpectedly. Confirmed this
+in practice: after unplugging the drive, `systemctl status dragonfly-capture`
+just sat at `inactive (dead)` indefinitely, with no retry attempts logged.
+So the udev rule above is what actually brings capture back — it explicitly
+`systemctl start`s capture the instant the drive reappears and remounts,
+rather than relying on systemd to notice and retry by itself. (`Restart=always`
+is still worth keeping in the unit file — it covers a genuine crash of the
+capture process for reasons unrelated to the drive.) Redeploy this updated unit file the
 normal way (`bash deploy/install_pi.sh` re-copies it, or manually
 `sudo cp deploy/dragonfly-capture.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl restart dragonfly-capture`).
 
