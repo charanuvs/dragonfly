@@ -18,6 +18,17 @@ dashboard:
                         # never gets a route to the dashboard anyway (see docs/network.md)
   port: 8000
 
+# Health monitoring, run by the portal process (not capture — a component
+# can't report its own death). Checks camera reachability, storage health,
+# whether recordings are actually landing on disk, and whether the capture
+# process is up. See docs/architecture.md.
+watchdog:
+  interval_s: 15
+  capture_service: dragonfly-capture
+  storage_full_pct: 95        # storage counts as unhealthy at/above this
+  recording_grace_s: 60       # slack past a segment's length before
+                              # recording is judged stopped
+
 cameras:
   - id: OW
     name: "Outdoor West"

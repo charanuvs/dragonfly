@@ -23,6 +23,12 @@ class ModuleStatus:
     recording_last_segment: str | None = None
     recording_last_event: float | None = None
 
+    # Free-form per-module facts from whichever check produced this status
+    # (disk usage, systemd state, RTSP host/port, last error...). Rendered
+    # verbatim on the dashboard card, so a module can surface useful detail
+    # without the registry or the UI needing to know about that module type.
+    details: dict = field(default_factory=dict)
+
 
 class DeviceRegistry:
     def __init__(self) -> None:
@@ -34,6 +40,7 @@ class DeviceRegistry:
         module_type: str,
         online: bool = True,
         last_seen: float | None = None,
+        details: dict | None = None,
     ) -> None:
         """Record a module's reported state.
 
@@ -48,6 +55,10 @@ class DeviceRegistry:
         status = ModuleStatus(module_id=module_id, module_type=module_type, online=online)
         if last_seen is not None:
             status.last_seen = last_seen
+        if details is not None:
+            status.details = details
+        elif existing is not None:
+            status.details = existing.details
         if existing is not None:
             # Preserve recording state — heartbeat and recording are reported
             # on independent schedules, so a heartbeat update shouldn't wipe

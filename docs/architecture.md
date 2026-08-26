@@ -18,10 +18,10 @@ capture and portal — coordinating only over MQTT, not by sharing memory:
    isolated  ───────┤  MQTT broker (Mosquitto)                  │
    sensor    ◄──────┤  ┌──────────────┐      ┌────────────────┐│
    network          │  │   capture     │◄────►│     portal      ││
-   (no internet)     │  │ (heartbeat,   │ MQTT │  (FastAPI       ││──►  home LAN
-                    │  │  recorder,    │      │   dashboard,    ││     (internet,
-                    │  │  live ffmpeg) │      │   own registry) ││      your Mac, phone)
-                    │  └──────────────┘      └────────────────┘│
+   (no internet)     │  │  (recorder,   │ MQTT │  (dashboard +   ││──►  home LAN
+                    │  │  live ffmpeg) │      │   watchdog)     ││     (internet,
+                    │  │               │◄─────┤  watches capture ││      your Mac, phone)
+                    │  └──────────────┘ check └────────────────┘│
                     │  external HDD (recordings)                │
                     └───────────────────────────────────────┘
 ```
@@ -59,17 +59,39 @@ Used by both processes, contains no process-specific logic itself.
 
 ### Capture process (`hub/capture_main.py`, console script `dragonfly-capture`)
 
-Owns everything that actually talks to a camera: the heartbeat modules, the
-recorders, and the live-view ffmpeg manager (below). Publishes
-heartbeat/recording events to MQTT; has no HTTP server and no direct
-knowledge of the dashboard. Run under systemd as `dragonfly-capture.service`.
+Does the work of talking to cameras: the recorders and the live-view ffmpeg
+manager (below). Publishes recording events to MQTT; has no HTTP server and
+no direct knowledge of the dashboard. Run under systemd as
+`dragonfly-capture.service`.
 
-Capture also publishes its own process-level heartbeat every
-`CAPTURE_HEALTH_INTERVAL_S` (15s), under a pseudo module-id (`_capture`, not
-a real camera). This reuses the existing heartbeat plumbing/UI, so if
-capture itself dies entirely — not just a single camera going unreachable —
-that shows up on the dashboard as its own card going stale/offline, rather
-than only being inferable from every camera's status going stale at once.
+Capture deliberately monitors **nothing**, including itself — all health
+checking belongs to the watchdog (below), which runs in the portal process.
+A component reporting its own health can't report having died: capture's
+earlier self-heartbeat simply went silent when capture crashed, leaving the
+dashboard to infer the problem from staleness. Checking from outside is both
+simpler and more truthful.
+
+### Watchdog (`src/dragonfly/watchdog/`)
+
+Runs as a background thread in the portal process. Four checks, all
+external observations rather than self-reports:
+
+1. **Camera reachable** — TCP connect to the RTSP port.
+2. **Storage healthy** — mounted, readable (`os.statvfs`, which fails with
+   EIO on a mount whose drive was yanked, the case where `os.path.ismount()`
+   still says True), and not full.
+3. **Recording actually happening** — verified by finding the newest `.mp4`
+   on disk and checking it's been written to recently. Notably this does not
+   trust a "segment started" event; the recorder saying it started writing
+   isn't proof bytes landed.
+4. **Capture process up** — `systemctl is-active dragonfly-capture`, which
+   stays correct even if capture is hard-killed or never started.
+
+Results go into portal's `DeviceRegistry` (so the dashboard renders them
+like any other module, including two pseudo-modules `_capture` and
+`_storage`) and are published retained over MQTT for anything else that
+cares. Intervals and thresholds are configurable under `watchdog:` in
+`config/dragonfly.yaml`.
 
 ### Portal process (`hub/portal_main.py`, console script `dragonfly-portal`)
 
@@ -88,17 +110,14 @@ Everything that isn't the hub. All modules implement the same interface
 per device type: `module_id`, `module_type`, `start()`, `stop()`, and a
 callback that publishes readings onto the event bus.
 
-- **`modules/camera/`** — camera modules. The first one, **`rtsp_camera.py`**,
-  covers the Outdoor West (`OW`) camera: an RTSP/ONVIF network camera, so the
-  hub can't wire it directly like a Pi Camera Module. It's monitored with a
-  lightweight heartbeat — a background thread does a plain TCP connect to the
-  camera's RTSP port on an interval (`poll_interval_s` in config) and
-  publishes `{online, type, ts}` to `dragonfly/<id>/heartbeat`. This is
-  intentionally the smallest useful slice ("is OW reachable right now?").
-  Actual recording is a separate, opt-in (`record: true`) module,
-  **`recorder.py`**: an ffmpeg-based segmented recorder with gapless cutover
-  and date-based retention cleanup — see [`recording.md`](recording.md) for
-  the full design and the storage math behind its defaults.
+- **`modules/camera/`** — camera modules. The Outdoor West (`OW`) camera is
+  RTSP/ONVIF, so the hub can't wire it directly like a Pi Camera Module.
+  Recording is an opt-in (`record: true`) module, **`recorder.py`**: an
+  ffmpeg-based segmented recorder with gapless cutover and storage-watermark
+  cleanup — see [`recording.md`](recording.md) for the full design and the
+  storage math behind its defaults. **`rtsp_camera.py`** holds the
+  reachability check (`parse_rtsp_target`, a plain TCP connect to the RTSP
+  port); the watchdog is what calls it now, on `watchdog.interval_s`.
 - Future sensor types are added as new subpackages under `modules/`, each a
   small driver that reads hardware and calls `publish()`.
 
@@ -116,12 +135,25 @@ LAN-reachable interface — never to the isolated sensor interface, never to a
 tailscale/public interface without deliberately deciding to do so later.
 
 `hub/portal_main.py` runs the dashboard (uvicorn, alongside its own MQTT
-event loop in a background thread) in a process separate from capture. The
+event loop and the watchdog thread) in a process separate from capture. The
 dashboard's `/api/modules` endpoint reads `app.state.registry`, but that
-registry is portal's own — built by independently subscribing to MQTT and
-replaying heartbeat/recording events — not a shared object with capture.
-There is no direct IPC between the two processes at all, only MQTT plus the
-shared live-view directory described next.
+registry is portal's own — populated by the watchdog's checks plus capture's
+MQTT events — not a shared object with capture. There is no direct IPC
+between the two processes at all, only MQTT plus the shared live-view
+directory described next.
+
+Each module's card also renders a free-form `details` dict — whatever the
+check that produced it found worth reporting (disk usage, systemd state,
+newest segment and its age, last error). That keeps the UI generic: a new
+check can surface useful facts without the dashboard needing to know
+anything about it.
+
+Note the division of labour on recording status: the watchdog owns
+`recording_active`, judged from files on disk, while capture's own MQTT
+events contribute only the *reason* something failed (`not_mounted`,
+`write_failed`, `segment_failed`), shown as "capture says". Capture
+announcing that it started a segment is not evidence that bytes were
+written — keeping the claim and the verification separate is the point.
 
 **Live view** (`dashboard/live.py`, `/live/<camera-id>`) is a third, separate
 way capture touches a camera besides the heartbeat and the recorder: an

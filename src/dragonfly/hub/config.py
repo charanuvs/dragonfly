@@ -66,10 +66,26 @@ class CameraConfig(BaseModel):
     retention_days: int | None = None
 
 
+class WatchdogConfig(BaseModel):
+    """Health monitoring, run by the portal process (see watchdog/monitor.py)."""
+
+    interval_s: float = 15.0
+    # Checked with `systemctl is-active` — external observation, so it stays
+    # correct even if capture is hard-killed or never started.
+    capture_service: str = "dragonfly-capture"
+    # Storage counts as unhealthy at/above this usage. Above the recorder's
+    # high_watermark_pct (90) so normal cleanup churn doesn't read as a fault.
+    storage_full_pct: float = 95.0
+    # How far past a segment's expected duration the newest file on disk may
+    # be before recording is judged stopped.
+    recording_grace_s: float = 60.0
+
+
 class HubConfig(BaseModel):
     mqtt: MqttConfig = MqttConfig()
     storage: StorageConfig = StorageConfig()
     dashboard: DashboardConfig = DashboardConfig()
+    watchdog: WatchdogConfig = WatchdogConfig()
     cameras: list[CameraConfig] = []
 
 

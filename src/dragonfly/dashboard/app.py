@@ -37,12 +37,18 @@ app.state.storage_path = "/"
 app.state.event_bus = None
 app.state.live_dir = Path("/tmp/dragonfly-live")
 
-# Mirrors hub/capture_main.py's CAPTURE_HEALTH_MODULE_ID / _INTERVAL_S — the
-# pseudo module-id capture uses to report its own process-level liveness,
-# and the staleness grace applied to any heartbeat-based module that isn't a
-# configured camera (so it doesn't have a poll_interval_s of its own).
-_CAPTURE_HEALTH_MODULE_ID = "_capture"
+# Staleness grace for any module that isn't a configured camera (so has no
+# poll_interval_s of its own) — i.e. the watchdog's pseudo-modules. Comfortably
+# above the watchdog's default 15s interval, so a couple of missed passes don't
+# flap the card to offline.
 _DEFAULT_STALE_GRACE_S = 45
+
+# Friendly names for the watchdog's pseudo-modules — these aren't cameras or
+# sensors, they're the system watching itself (see watchdog/monitor.py).
+_PSEUDO_MODULE_NAMES = {
+    "_capture": "Capture process",
+    "_storage": "Recordings storage",
+}
 
 
 @app.get("/health")
@@ -72,8 +78,8 @@ def list_modules(request: Request) -> list[dict]:
         if online and (now - status.last_seen) > stale_after:
             online = False
 
-        name = meta.name if meta else (
-            "Capture process" if status.module_id == _CAPTURE_HEALTH_MODULE_ID else status.module_id
+        name = meta.name if meta else _PSEUDO_MODULE_NAMES.get(
+            status.module_id, status.module_id
         )
 
         # A recorder is only really "active" if we've heard from it recently.
@@ -104,6 +110,7 @@ def list_modules(request: Request) -> list[dict]:
                     if status.recording_last_event is not None
                     else None
                 ),
+                "details": status.details,
             }
         )
     return modules
@@ -274,6 +281,49 @@ _INDEX_HTML = """<!doctype html>
       return rem ? `${m}m ${rem}s` : `${m}m`;
     }
 
+    // Whatever facts the watchdog check produced for this module — disk
+    // usage, systemd state, newest segment, last error. Rendered generically
+    // so a new check can surface useful detail without touching this code.
+    const DETAIL_LABELS = {
+      used_pct: 'disk used', free_bytes: 'free', total_bytes: 'capacity',
+      newest_segment: 'newest file', newest_age_s: 'file age',
+      newest_size_bytes: 'file size', state: 'systemd', service: 'unit',
+      host: 'host', port: 'port', mount_point: 'mount', error: 'error',
+      capture_report: 'capture says', full: 'full', mounted: 'mounted',
+      healthy: 'readable', stale_after_s: 'stale after', root: 'path',
+    };
+    const DETAIL_ORDER = Object.keys(DETAIL_LABELS);
+
+    function fmtBytes(n) {
+      const u = ['B','KB','MB','GB','TB']; let i = 0;
+      while (Math.abs(n) >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+      return `${n.toFixed(1)} ${u[i]}`;
+    }
+    function fmtDetail(k, v) {
+      if (v === null || v === undefined || v === '') return null;
+      if (k === 'used_pct') return `${v}%`;
+      if (k.endsWith('_bytes')) return fmtBytes(v);
+      if (k.endsWith('_age_s') || k.endsWith('_after_s')) return formatAgo(v);
+      if (k === 'newest_segment' || k === 'root') return String(v).split('/').slice(-3).join('/');
+      if (typeof v === 'boolean') return v ? 'yes' : 'no';
+      return String(v);
+    }
+    function renderDetails(details) {
+      if (!details) return '';
+      const keys = Object.keys(details).sort((a, b) => {
+        const ia = DETAIL_ORDER.indexOf(a), ib = DETAIL_ORDER.indexOf(b);
+        return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+      });
+      const rows = keys.map(k => {
+        const v = fmtDetail(k, details[k]);
+        if (v === null) return '';
+        const label = DETAIL_LABELS[k] || k.replace(/_/g, ' ');
+        const bad = k === 'error' || (k === 'full' && details[k]);
+        return `<div class="meta"${bad ? ' style="color:#e74c3c"' : ''}>${label}: ${v}</div>`;
+      }).filter(Boolean);
+      return rows.join('');
+    }
+
     async function refresh() {
       const res = await fetch('/api/modules');
       const modules = await res.json();
@@ -285,12 +335,11 @@ _INDEX_HTML = """<!doctype html>
       grid.innerHTML = modules.map(m => `
         <div class="card">
           <div class="name">${m.name}</div>
-          <div class="id">${m.module_id} &middot; ${m.module_type}</div>
           <div class="status">
             <span class="dot ${m.online ? 'online' : 'offline'}"></span>
             ${m.online ? 'Online' : 'Offline'}
           </div>
-          <div class="meta">last check ${m.seconds_since_seen.toFixed(0)}s ago</div>
+          <div class="meta">checked ${formatAgo(m.seconds_since_seen)} ago</div>
           ${m.recording_enabled ? `
           <div class="status">
             <span class="dot ${m.recording_active ? 'online' : 'offline'}"></span>
@@ -298,10 +347,12 @@ _INDEX_HTML = """<!doctype html>
           </div>
           <div class="meta">
             ${m.recording_seconds_since_event !== null
-              ? `last segment started ${formatAgo(m.recording_seconds_since_event)} ago`
+              ? `verified ${formatAgo(m.recording_seconds_since_event)} ago`
               : 'no recording activity yet'}
           </div>` : ''}
-          ${m.module_type.includes('camera') ? `<div class="meta"><a href="/live/${m.module_id}" style="color:#4da3ff">Live view &rarr;</a></div>` : ''}
+          ${renderDetails(m.details)}
+          ${m.module_type.includes('camera') && m.module_id.charAt(0) !== '_'
+            ? `<div class="meta"><a href="/live/${m.module_id}" style="color:#4da3ff">Live view &rarr;</a></div>` : ''}
         </div>
       `).join('');
     }
