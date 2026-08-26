@@ -107,18 +107,39 @@ just a one-off `mount` command — the recorder checks
 this to actually be a mount, not just an existing directory. Set that up
 once:
 
+**Format the drive ext4, not FAT32/exFAT.** This matters more than it
+sounds: ext4 journals its metadata, so an unclean unplug (or power loss, or
+the drive resetting itself on the USB bus) replays the journal on the next
+mount and comes back consistent. FAT32 has no equivalent — learned the hard
+way, a few unclean unplugs during testing left it throwing
+`FAT-fs: Directory bread(block N) failed` / `OSError: [Errno 5]` on every
+write, needing a manual `fsck.vfat` to recover, with some data lost to
+truncation. For a device doing continuous writes that may get yanked, a
+journaling filesystem isn't optional.
+
 ```bash
-lsblk                          # find the device, e.g. /dev/sda1
-sudo blkid /dev/sda1           # get its UUID
+lsblk                          # find the device, e.g. /dev/sda1 — double-check
+                               # this before mkfs; the wrong device wipes your SD card
+sudo mkfs.ext4 -L DRAGONFLY /dev/sda1
+sudo blkid /dev/sda1           # get the (new) UUID — formatting assigns a fresh one
 sudo mkdir -p /mnt/dragonfly-hdd
 sudo nano /etc/fstab
-# add a line (adjust filesystem type — ext4/vfat/exfat — to match the drive):
+# add a line:
 #   UUID=<uuid-from-blkid>  /mnt/dragonfly-hdd  ext4  defaults,nofail  0  2
+sudo systemctl daemon-reload   # regenerate the .mount unit from the new fstab
 sudo mount -a                  # mounts it now and validates the fstab line
+sudo chown -R charan:charan /mnt/dragonfly-hdd   # ext4 has real ownership; the
+                               # capture service runs as this user and must be
+                               # able to write (vfat used uid/gid/umask mount
+                               # options instead — those don't apply to ext4)
 ```
 
 `nofail` matters: without it, a missing/failed drive can hang the Pi's boot
 entirely waiting for a mount that'll never come.
+
+The final `2` in the fstab line is the fsck pass number — it tells systemd
+to check (and repair) this filesystem at boot, a backstop in case something
+does get corrupted despite the journal.
 
 ## Auto-mounting on plug-in, and what happens if the drive disappears
 
