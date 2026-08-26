@@ -246,6 +246,13 @@ _INDEX_HTML = """<!doctype html>
     tickSystem();
     setInterval(tickSystem, 1000);
 
+    function formatAgo(s) {
+      if (s < 60) return `${s.toFixed(0)}s`;
+      const m = Math.floor(s / 60);
+      const rem = Math.round(s % 60);
+      return rem ? `${m}m ${rem}s` : `${m}m`;
+    }
+
     async function refresh() {
       const res = await fetch('/api/modules');
       const modules = await res.json();
@@ -270,7 +277,7 @@ _INDEX_HTML = """<!doctype html>
           </div>
           <div class="meta">
             ${m.recording_seconds_since_event !== null
-              ? `last segment ${m.recording_seconds_since_event.toFixed(0)}s ago`
+              ? `last segment started ${formatAgo(m.recording_seconds_since_event)} ago`
               : 'no recording activity yet'}
           </div>` : ''}
           ${m.module_type.includes('camera') ? `<div class="meta"><a href="/live/${m.module_id}" style="color:#4da3ff">Live view &rarr;</a></div>` : ''}
