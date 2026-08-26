@@ -34,10 +34,20 @@ echo "== Installing systemd services =="
 # See docs/architecture.md.
 sudo cp deploy/dragonfly-capture.service /etc/systemd/system/dragonfly-capture.service
 sudo cp deploy/dragonfly-portal.service /etc/systemd/system/dragonfly-portal.service
+
+# Mount watchdog: clears the dead mount left behind when the recordings
+# drive is physically unplugged, so it remounts cleanly when plugged back
+# in and recording resumes by itself. See docs/recording.md.
+chmod +x deploy/dragonfly-mount-watchdog.sh
+sudo cp deploy/dragonfly-mount-watchdog.service /etc/systemd/system/dragonfly-mount-watchdog.service
+sudo cp deploy/dragonfly-mount-watchdog.timer /etc/systemd/system/dragonfly-mount-watchdog.timer
+
 sudo systemctl daemon-reload
 sudo systemctl enable dragonfly-capture dragonfly-portal
 sudo systemctl restart dragonfly-capture dragonfly-portal
+sudo systemctl enable --now dragonfly-mount-watchdog.timer
 
 echo "== Done. Check status with:"
 echo "     sudo systemctl status dragonfly-capture"
-echo "     sudo systemctl status dragonfly-portal =="
+echo "     sudo systemctl status dragonfly-portal"
+echo "     systemctl list-timers dragonfly-mount-watchdog.timer =="

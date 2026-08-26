@@ -1,0 +1,10 @@
+[Unit]
+Description=Dragonfly recordings-drive mount watchdog (clears dead mounts)
+Documentation=file:///home/charan/dragonfly/docs/recording.md
+
+[Service]
+Type=oneshot
+# Root: umount/mount require privileges. This is why the check lives here
+# rather than inside dragonfly-capture, which runs unprivileged as charan.
+User=root
+ExecStart=/home/charan/dragonfly/deploy/dragonfly-mount-watchdog.sh

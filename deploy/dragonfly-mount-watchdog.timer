@@ -1,0 +1,14 @@
+[Unit]
+Description=Run the Dragonfly mount watchdog periodically
+
+[Timer]
+# Start checking shortly after boot, then every 30s. 30s is well inside one
+# segment_seconds (300s default), so a drive that's plugged back in gets its
+# dead mount cleared and remounted before the next scheduled segment attempt
+# — meaning recording resumes on its own, no manual intervention.
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

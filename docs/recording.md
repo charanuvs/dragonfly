@@ -154,37 +154,64 @@ boot), via a udev rule matching its filesystem UUID (the same UUID from
 ```bash
 sudo tee /etc/udev/rules.d/99-dragonfly-hdd.rules <<'EOF'
 SUBSYSTEM=="block", ENV{ID_FS_UUID}=="<uuid-from-blkid>", ACTION=="add", RUN+="/usr/bin/systemctl start mnt-dragonfly\x2dhdd.mount"
-SUBSYSTEM=="block", ENV{ID_FS_UUID}=="<uuid-from-blkid>", ACTION=="remove", RUN+="/usr/bin/umount -l /mnt/dragonfly-hdd"
 EOF
 sudo udevadm control --reload-rules
 ```
 
-Replace `<uuid-from-blkid>` with the actual UUID. `mnt-dragonfly\x2dhdd.mount`
-is the unit name systemd generates from the `/mnt/dragonfly-hdd` fstab entry
-(the escaped `\x2d` is a literal `-`) — the `add` rule tells udev to ask
-systemd to (re-)mount it the instant the matching device shows up.
+Replace `<uuid-from-blkid>` with the actual UUID — and remember to redo this
+if you ever reformat, since formatting assigns a **new** UUID and a rule
+still pointing at the old one silently never fires.
+`mnt-dragonfly\x2dhdd.mount` is the unit name systemd generates from the
+`/mnt/dragonfly-hdd` fstab entry (the escaped `\x2d` is a literal `-`) —
+this rule tells udev to ask systemd to mount it the instant the matching
+device shows up.
 
-**The `remove` rule matters just as much, and is easy to overlook.** When a
-USB drive is physically yanked (rather than cleanly unmounted), the kernel
-keeps the mount entry in place — it just fails every I/O against it, and
-ext4 flags the mount `shutdown` after the first errors. Two consequences:
+### The dead-mount problem (and the watchdog that fixes it)
+
+Auto-mounting on plug-in is only half the story, because of how Linux
+handles a USB drive that's *physically yanked* rather than cleanly
+unmounted: the kernel keeps the mount entry in place. It just fails every
+I/O against it, and ext4 flags the mount `shutdown` after the first errors.
+Two consequences, both confirmed on hardware:
 
 - `os.path.ismount()` still returns **True**, so the recorder's mount check
-  doesn't notice a physical unplug at all. Detection falls to the write
-  failures instead (`write_failed` / `segment_failed`), which the monitor
-  loop reports within ~10s. That path works, but don't expect the mount
-  check to be what catches it.
-- Worse, that dead mount squats on `/mnt/dragonfly-hdd`. When the drive is
-  plugged back in it re-enumerates under a *new* device node (`/dev/sda1`
-  where it used to be `/dev/sdb1`), and the `add` rule's mount silently
-  fails because the mountpoint is already occupied. Recording then never
-  resumes — every write keeps hitting the zombie mount and returning EIO,
-  even though the drive is physically present and healthy.
+  doesn't notice a physical unplug at all. Detection falls to write failures
+  instead (`write_failed` / `segment_failed`), which the monitor loop
+  reports within ~10s. That path works — but the mount check is not what
+  catches the most likely real-world case.
+- Worse, the dead mount squats on `/mnt/dragonfly-hdd`. When the drive is
+  plugged back in it re-enumerates under a **new device node** (`/dev/sdb1`
+  where it was `/dev/sda1`), and mounting fails because the mountpoint is
+  already occupied. Recording never resumes — every write keeps hitting the
+  zombie mount and returning EIO — even though the drive is physically
+  present and perfectly healthy. You can spot this state instantly:
+  `mount | grep dragonfly-hdd` shows a *different* device than `lsblk` says
+  the drive currently is, with `shutdown` in the mount options.
 
-The `remove` rule's lazy unmount (`umount -l`) clears the dead mount as soon
-as the device disappears, leaving the mountpoint free so the `add` rule can
-mount the drive properly when it returns. Without it, recovery requires a
-manual `sudo umount -l /mnt/dragonfly-hdd && sudo mount -a`.
+A udev `ACTION=="remove"` rule to unmount on unplug was the obvious fix and
+**doesn't work**: on removal there's no device left to probe, so
+`ENV{ID_FS_UUID}` generally isn't available to match on and the rule
+silently never fires.
+
+So this is handled by a small root-owned watchdog instead
+(`deploy/dragonfly-mount-watchdog.sh`, run every 30s by
+`dragonfly-mount-watchdog.timer`, installed by `install_pi.sh`). Every tick
+it probes the mountpoint with `stat -f` — a cheap read-only liveness check
+that succeeds on a healthy mount and fails with EIO on a dead one, without
+writing anything or walking directories that might disturb an in-progress
+recording. If the mount is dead it does `umount -l` (lazy, since ffmpeg may
+still hold the doomed path open) followed by `mount -a`, which picks the
+drive up under whatever device node it came back as.
+
+Net effect: unplug the drive and recording stops with an accurate "not
+recording" on the dashboard; plug it back in and within ~30s the mount is
+repaired, then recording resumes at the next scheduled segment — with no
+manual `umount`/`mount` and no service restart. Check on it with:
+
+```bash
+systemctl list-timers dragonfly-mount-watchdog.timer
+journalctl -u dragonfly-mount-watchdog -n 20
+```
 
 **What happens on the capture side if the drive is unplugged:**
 `dragonfly-capture.service` has *no* systemd-level dependency on the mount
