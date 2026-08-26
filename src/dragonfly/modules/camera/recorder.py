@@ -29,16 +29,25 @@ docs/recording.md). `retention_days`, if set, is an independent hard
 ceiling (e.g. a privacy/legal cutoff), not the primary mechanism.
 
 Resilient to storage disappearing out from under it (e.g. the recordings
-drive gets unplugged): a failed segment launch or write never crashes the
-recording thread, it's caught, reported over MQTT as "not recording", and
-retried on the next scheduled segment. This is deliberately just a recorder
-concern — heartbeat and live view run independently in the same process and
-are unaffected by a storage problem.
+drive gets unplugged): before every segment, `os.path.ismount(mount_point)`
+is checked so a missing drive is caught explicitly (mkdir() alone wouldn't
+fail — it would silently create directories on the underlying root
+filesystem instead), and any other write failure is also caught rather than
+raised. Either way it's reported over MQTT as "not recording" and retried
+on the next scheduled segment — never crashes the recording thread. This is
+deliberately just a recorder concern — heartbeat and live view run
+independently in the same process and are unaffected by a storage problem.
+Correspondingly, `dragonfly-capture.service` does not gate its own
+lifecycle on the drive being mounted at all (no RequiresMountsFor/BindsTo) —
+that turned out to still propagate a stop to the whole service once the
+mount later disappeared, taking heartbeat/live view down as collateral
+damage. See docs/recording.md.
 """
 from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import subprocess
 import threading
@@ -79,6 +88,7 @@ class SegmentedRecorder(SensorModule):
         high_watermark_pct: float = 90.0,
         low_watermark_pct: float = 80.0,
         retention_days: int | None = None,
+        mount_point: str | None = None,
     ) -> None:
         super().__init__(module_id, bus)
         self.rtsp_url = rtsp_url
@@ -90,6 +100,11 @@ class SegmentedRecorder(SensorModule):
         self.high_watermark_pct = high_watermark_pct
         self.low_watermark_pct = low_watermark_pct
         self.retention_days = retention_days
+        # Checked with os.path.ismount() before every write — see
+        # _launch_segment. Without this, mkdir() on recordings_root doesn't
+        # fail when the drive isn't mounted, it just silently creates
+        # directories on the underlying root filesystem instead.
+        self.mount_point = mount_point
 
         self._stop = threading.Event()
         self._record_thread: threading.Thread | None = None
@@ -158,6 +173,24 @@ class SegmentedRecorder(SensorModule):
     def _launch_segment(self, boundary_epoch: float, duration: float) -> None:
         dt = datetime.fromtimestamp(boundary_epoch).astimezone()
         path = compute_segment_path(dt, self.root, self.segment_seconds)
+
+        # Check the drive is actually mounted before touching the
+        # filesystem at all. Without this, mkdir() below wouldn't fail if
+        # the drive isn't mounted — it would just silently create
+        # directories on the underlying root filesystem instead, so
+        # recordings would quietly land on the SD card instead of erroring
+        # or retrying.
+        if self.mount_point is not None and not os.path.ismount(self.mount_point):
+            log.warning(
+                "%s is not mounted — skipping this segment, will retry next scheduled segment",
+                self.mount_point,
+            )
+            self.publish(
+                "recording",
+                json.dumps({"active": False, "error": "not_mounted", "ts": time.time()}),
+            )
+            return
+
         cmd = [
             "ffmpeg", "-nostdin", "-y", "-loglevel", "warning",
             "-rtsp_transport", "tcp", "-timeout", "15000000",

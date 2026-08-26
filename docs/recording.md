@@ -100,10 +100,12 @@ buys weeks-to-months of retention at bitrates that actually look good.
 
 ## Making the drive survive reboots
 
-`dragonfly-capture.service` has `RequiresMountsFor=/mnt/dragonfly-hdd`, so
-systemd won't start capture until that path is actually mounted — but that
-only works if it's a real mount, backed by an `/etc/fstab` entry, not just a
-one-off `mount` command. Set that up once:
+`config/dragonfly.yaml`'s `storage.mount_point` (`/mnt/dragonfly-hdd` by
+default) needs to be a real mount, backed by an `/etc/fstab` entry, not
+just a one-off `mount` command — the recorder checks
+`os.path.ismount(mount_point)` before every write (see below), so it needs
+this to actually be a mount, not just an existing directory. Set that up
+once:
 
 ```bash
 lsblk                          # find the device, e.g. /dev/sda1
@@ -141,26 +143,37 @@ is the unit name systemd generates from the `/mnt/dragonfly-hdd` fstab entry
 to (re-)mount it the instant the matching device shows up.
 
 **What happens on the capture side if the drive is unplugged:**
-`dragonfly-capture.service` only uses `RequiresMountsFor` (startup-time gate
-— won't start until the drive is mounted) and deliberately does *not* tear
-the whole service down if the drive later disappears while running.
-Heartbeat and live view don't touch this drive at all, so there's no reason
-for the camera to show offline just because storage briefly vanished — an
-earlier version of this used `BindsTo=` to stop the whole service, but that
-also killed heartbeat/live view as collateral damage, and (confirmed in
-testing) `Restart=` doesn't even bring a `BindsTo`-stopped service back on
-its own, since that kind of stop is treated as intentional rather than a
-failure.
+`dragonfly-capture.service` has *no* systemd-level dependency on the mount
+at all — not `RequiresMountsFor`, not `BindsTo`, nothing (just an `After=`
+ordering hint so it starts after the mount unit at boot, best-effort, not
+required). Two earlier attempts got this wrong, in the same way each time:
 
-Instead, `SegmentedRecorder` (`recorder.py`) catches storage failures
-itself: if a segment can't be started or a write fails, it's caught,
-reported over MQTT as "not recording" (shows up immediately on the
-dashboard), and retried on the next scheduled segment — without crashing
-the recording thread or needing capture to restart at all. Once the udev
-rule above remounts the drive, the next scheduled segment attempt succeeds
-and recording resumes automatically, reporting "active" again — usually
-within one `segment_seconds` interval (5 min by default) of the drive coming
-back. Heartbeat and live view are unaffected throughout.
+1. `BindsTo=mnt-dragonfly\x2dhdd.mount` tore the whole service down when the
+   drive was unplugged, taking heartbeat/live view down as collateral
+   damage even though neither touches that drive. `Restart=always` didn't
+   even bring it back afterward, since systemd treats a `BindsTo`-triggered
+   stop as intentional, not a failure.
+2. Switching to `RequiresMountsFor=/mnt/dragonfly-hdd` was believed to only
+   gate *startup* — but confirmed on real hardware that it **also** stops
+   the already-running service once the mount unit later disappears. Same
+   problem as `BindsTo`, just less obviously documented that way.
+
+So capture's lifecycle is now fully decoupled from the mount at the
+systemd level, in both directions. Instead, `SegmentedRecorder`
+(`recorder.py`) handles storage itself, entirely in application code:
+before every segment it checks `os.path.ismount(storage.mount_point)` —
+without this check, `mkdir()` wouldn't fail when the drive isn't mounted,
+it would silently create directories on the underlying root filesystem (the
+SD card) instead of erroring, so recordings could quietly end up in the
+wrong place. If the mount isn't there, or if any other write failure
+occurs, it's reported over MQTT as "not recording" (shows up immediately on
+the dashboard) and retried on the next scheduled segment — never crashing
+the recording thread or needing capture to restart. Once the udev rule
+above remounts the drive, the next scheduled segment attempt succeeds and
+recording resumes automatically, reporting "active" again — usually within
+one `segment_seconds` interval (5 min by default) of the drive coming back.
+Heartbeat and live view are unaffected throughout, since they never
+depended on the drive in the first place.
 
 Redeploy the unit file the normal way after pulling
 (`bash deploy/install_pi.sh` re-copies it, or manually

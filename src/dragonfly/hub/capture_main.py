@@ -86,6 +86,7 @@ def run() -> None:
             high_watermark_pct=cam.high_watermark_pct,
             low_watermark_pct=cam.low_watermark_pct,
             retention_days=cam.retention_days,
+            mount_point=config.storage.mount_point,
         )
         for cam in config.cameras
         if cam.record

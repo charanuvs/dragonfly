@@ -8,6 +8,10 @@ mqtt:
 storage:
   recordings_path: /mnt/dragonfly-hdd/recordings
   database_path: /mnt/dragonfly-hdd/dragonfly.db
+  # The recorder checks this is actually mounted before every write — see
+  # docs/recording.md. Set to null if you're not using a separate mount
+  # (e.g. recording straight to the SD card) to skip the check.
+  mount_point: /mnt/dragonfly-hdd
 
 dashboard:
   bind_host: 0.0.0.0   # fine to leave as-is; the Pi's IoT-network interface

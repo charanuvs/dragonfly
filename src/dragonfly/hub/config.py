@@ -20,6 +20,13 @@ class MqttConfig(BaseModel):
 class StorageConfig(BaseModel):
     recordings_path: str = "/mnt/dragonfly-hdd/recordings"
     database_path: str = "/mnt/dragonfly-hdd/dragonfly.db"
+    # The mount point recordings_path is expected to live under. The recorder
+    # checks os.path.ismount(mount_point) before writing each segment — if
+    # the drive isn't actually mounted there, mkdir() would otherwise happily
+    # (and silently) create directories on the underlying root filesystem
+    # instead of erroring, which would mean recordings quietly go to the SD
+    # card instead of the external drive. Set to None to skip this check.
+    mount_point: str | None = "/mnt/dragonfly-hdd"
 
 
 class DashboardConfig(BaseModel):

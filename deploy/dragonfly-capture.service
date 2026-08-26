@@ -1,21 +1,23 @@
 [Unit]
 Description=Dragonfly capture service (heartbeat, recorder, live-stream ffmpeg)
+# After= only (no RequiresMountsFor/BindsTo): this is deliberately NOT tied
+# to the drive's mount unit at all, in either direction. Two earlier
+# attempts got this wrong:
+#   1. BindsTo=mnt-dragonfly\x2dhdd.mount tore the whole service down when
+#      the drive was unplugged, taking heartbeat/live view with it as
+#      collateral damage even though neither touches that drive.
+#   2. RequiresMountsFor=/mnt/dragonfly-hdd was assumed to only gate
+#      *startup*, but confirmed on real hardware that it ALSO stops the
+#      running service once the mount unit later goes away — same problem
+#      as BindsTo, just less obviously.
+# So capture no longer has any systemd-level dependency on the mount being
+# present, at startup or afterward. Instead, recorder.py checks
+# os.path.ismount() itself before every write (since mkdir() alone would
+# silently write to the wrong place — the underlying root filesystem —
+# rather than fail, if the drive isn't actually mounted), reports "not
+# recording" over MQTT, and retries on schedule. See docs/recording.md.
 After=network-online.target mosquitto.service mnt-dragonfly\x2dhdd.mount
 Wants=network-online.target
-# RequiresMountsFor (not BindsTo) only gates *startup* — it won't start
-# capture until the drive is mounted, but deliberately does NOT tear the
-# whole process down if the drive is later unplugged while running. That's
-# intentional: heartbeat and live view don't touch this drive at all, so
-# there's no reason to take the camera offline in the dashboard just
-# because the recordings drive briefly disappeared. Only the recorder
-# itself is affected — see recorder.py, which catches storage-write
-# failures internally, publishes "not recording", and keeps retrying each
-# scheduled segment attempt without needing capture (or this service) to
-# restart at all. (An earlier version of this file used BindsTo= to tear
-# the whole service down instead — reverted because it also killed
-# heartbeat/live view, and because Restart= doesn't even auto-recover from
-# a BindsTo-triggered stop; see git history / docs/recording.md.)
-RequiresMountsFor=/mnt/dragonfly-hdd
 
 [Service]
 Type=simple
