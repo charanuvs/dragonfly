@@ -60,7 +60,210 @@ show_banner() {
     echo ""
 }
 
-show_banner
+# Pixel-shaded intro (half-block rendering): a dragonfly hovering beside a daisy.
+# Falls back to the plain emblem when not on a TTY or python3 is unavailable.
+show_intro() {
+    if [ ! -t 1 ] || [ "${TERM:-}" = "dumb" ] || [ "${DRAGONFLY_NO_ANIM:-0}" = "1" ] \
+        || ! command -v python3 >/dev/null 2>&1; then
+        show_banner
+        return
+    fi
+    python3 - <<'PYEOF' || show_banner
+import math, os, sys, time
+
+W, H = 74, 32
+FRAMES, DT = 90, 0.035
+DX0, DY0 = 21.0, 13.5
+FX, FY = 56.0, 13.0
+TRUE = os.environ.get("COLORTERM", "").lower() in ("truecolor", "24bit")
+
+
+def q256(r, g, b):
+    if abs(r - g) < 12 and abs(g - b) < 12:
+        if r < 8:
+            return 16
+        if r > 247:
+            return 231
+        return 232 + int(round((r - 8) / 239 * 23))
+    return 16 + 36 * int(round(r / 255 * 5)) + 6 * int(round(g / 255 * 5)) + int(round(b / 255 * 5))
+
+
+def sgr(c, layer):
+    r, g, b = c
+    return f"\033[{layer};2;{r};{g};{b}m" if TRUE else f"\033[{layer};5;{q256(r, g, b)}m"
+
+
+def clamp(v):
+    return max(0, min(255, int(v)))
+
+
+def shade(c, f):
+    return (clamp(c[0] * f), clamp(c[1] * f), clamp(c[2] * f))
+
+
+def mix(a, b, t):
+    t = max(0.0, min(1.0, t))
+    return tuple(clamp(a[i] + (b[i] - a[i]) * t) for i in range(3))
+
+
+def put(c, x, y, col):
+    if 0 <= x < W and 0 <= y < H:
+        c[y][x] = col
+
+
+def ellipse(c, cx, cy, rx, ry, colfn, angle=0.0):
+    r = max(rx, ry) + 1
+    ca, sa = math.cos(angle), math.sin(angle)
+    for y in range(int(cy - r) - 1, int(cy + r) + 2):
+        for x in range(int(cx - r) - 1, int(cx + r) + 2):
+            dx, dy = x - cx, y - cy
+            u = dx * ca + dy * sa
+            v = -dx * sa + dy * ca
+            d = (u / rx) ** 2 + (v / ry) ** 2
+            if d <= 1.0:
+                col = colfn(u, v, d)
+                if col is not None:
+                    put(c, x, y, col)
+
+
+def draw_flower(c, t):
+    sway = 0.05 * math.sin(t * 1.1)
+    for y in range(int(FY + 10), H):
+        xs = int(round(FX + 0.4 * math.sin(t * 0.6)))
+        put(c, xs, y, (62, 132, 52))
+        put(c, xs + 1, y, (40, 96, 36))
+    ellipse(c, FX - 5.5, FY + 16.5, 4.2, 1.5,
+            lambda u, v, d: (118, 190, 92) if abs(v) < 0.3 else mix((40, 108, 40), (92, 172, 72), (u + 4.2) / 8.4),
+            angle=-0.55 + sway * 2)
+    n = 14
+    for i in range(n):
+        a = 2 * math.pi * i / n + sway + 0.025 * math.sin(t * 1.7 + i)
+        px, py = FX + 8.5 * math.cos(a), FY + 8.5 * math.sin(a)
+        light = 0.5 + 0.5 * math.cos(a + 2.3)
+
+        def petal(u, v, d, light=light):
+            f = 0.86 + 0.14 * ((u + 5.5) / 11.0)
+            f *= 0.94 + 0.06 * light
+            if d > 0.80:
+                f *= 0.86
+            if abs(v) < 0.35 and u < 2.5:
+                f *= 0.95
+            return shade((255, 252, 240), f)
+
+        ellipse(c, px, py, 5.5, 2.0, petal, angle=a)
+    hx, hy = -1.6 + 0.4 * math.sin(t * 0.9), -1.6 + 0.3 * math.cos(t * 0.7)
+
+    def core(u, v, d):
+        col = mix((252, 212, 58), (176, 106, 16), d ** 0.75)
+        if (int((u + 9) * 2.2) * 7 + int((v + 9) * 2.2) * 13) % 7 == 0:
+            col = shade(col, 0.86)
+        hd = (u - hx) ** 2 + (v - hy) ** 2
+        if hd < 2.4:
+            col = mix(col, (255, 249, 205), 1 - hd / 2.4)
+        return col
+
+    ellipse(c, FX, FY, 4.6, 4.6, core)
+    k = int(t * 2.0) % n
+    if (t * 2.0) % 1.0 < 0.5:
+        a = 2 * math.pi * k / n + sway
+        sx, sy = int(round(FX + 13.4 * math.cos(a))), int(round(FY + 13.4 * math.sin(a)))
+        for ox, oy in ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)):
+            put(c, sx + ox, sy + oy, (255, 255, 255))
+
+
+def draw_dragonfly(c, t, frame):
+    dx = DX0 + 0.6 * math.sin(t * 0.7)
+    dy = DY0 + 0.9 * math.sin(t * 1.3)
+    up = frame % 2 == 0
+    flap = 0.07 if up else -0.07
+    blur = 0.70 if up else 1.0
+    wscale = 0.82 if up else 1.0
+
+    def wing(u, v, d, L, bl):
+        if u > 0.72 * L and abs(v) < 0.55:
+            return (46, 42, 68)
+        base = mix((84, 88, 124), (140, 144, 186), d)
+        if d > 0.86:
+            base = (170, 174, 214)
+        if int(u * 1.3) % 3 == 0 or abs(v) < 0.3:
+            base = mix(base, (156, 156, 196), 0.5)
+        return shade(base, bl)
+
+    for side in (1, -1):
+        for kind, ay, L, ry, base_a in (("fore", dy - 5.4, 9.2, 1.5, -0.26), ("hind", dy - 1.8, 8.6, 2.0, 0.30)):
+            a = base_a + flap * (1.0 if kind == "fore" else -1.0)
+            if side < 0:
+                a = math.pi - a
+            cx = dx + side * 1.4 + (L + 0.8) * math.cos(a)
+            cy = ay + (L + 0.8) * math.sin(a)
+            ellipse(c, cx, cy, L, ry * wscale, lambda u, v, d, L=L: wing(u, v, d, L, blur), angle=a)
+
+    for side in (-1, 1):
+        for ox, oy in ((2, -1.6), (3, -1.0), (2.5, -0.2), (3.5, 0.6)):
+            put(c, int(round(dx + side * ox)), int(round(dy + oy)), (30, 60, 36))
+
+    for i in range(15):
+        y = dy + 0.5 + i
+        dark = i % 3 == 2
+        col = (26, 76, 40) if dark else mix((80, 172, 94), (44, 120, 60), i / 15)
+        for xo in (-1, 0, 1):
+            if abs(xo) <= 1.6 - i * 0.06:
+                put(c, int(round(dx + xo)), int(round(y)), col if xo == 0 else shade(col, 0.70))
+    put(c, int(round(dx)), int(round(dy + 15.5)), (30, 70, 40))
+
+    ellipse(c, dx, dy - 3.6, 2.3, 3.3,
+            lambda u, v, d: (122, 204, 132) if (abs(u) < 0.5 and v < 0) else mix((94, 188, 106), (34, 96, 46), d ** 0.7))
+    ellipse(c, dx, dy - 7.4, 1.7, 1.4, lambda u, v, d: mix((70, 150, 80), (34, 90, 44), d))
+    for side in (-1, 1):
+        ellipse(c, dx + side * 1.7, dy - 7.9, 1.8, 1.7,
+                lambda u, v, d, s=side: (152, 228, 238) if (u * s < -0.6 and v < -0.5) else mix((22, 98, 120), (8, 42, 58), d ** 0.6))
+
+
+def render(c):
+    out = []
+    for y in range(0, H, 2):
+        line = []
+        for x in range(W):
+            tp, bt = c[y][x], c[y + 1][x]
+            if tp is None and bt is None:
+                line.append("\033[0m ")
+            elif bt is None:
+                line.append("\033[0m" + sgr(tp, 38) + "▀")
+            elif tp is None:
+                line.append("\033[0m" + sgr(bt, 38) + "▄")
+            else:
+                line.append(sgr(tp, 38) + sgr(bt, 48) + "▀")
+        out.append("".join(line) + "\033[0m")
+    return "\n".join(out)
+
+
+def main():
+    out = sys.stdout
+    rows = H // 2
+    out.write("\033[?25l" + "\n" * rows)
+    try:
+        for f in range(FRAMES):
+            t = f * DT
+            c = [[None] * W for _ in range(H)]
+            draw_flower(c, t)
+            draw_dragonfly(c, t, f)
+            out.write(f"\033[{rows}A" + render(c) + "\n")
+            out.flush()
+            time.sleep(DT)
+    finally:
+        out.write("\033[0m\033[?25h")
+        out.flush()
+
+
+main()
+PYEOF
+    echo ""
+    echo "  $(printf '\033[1m')Dragonfly$(printf '\033[0m') $(printf '\033[2m')Hub Service Installer$(printf '\033[0m')"
+    echo "  Local-First Security & Camera Hub"
+    echo ""
+}
+
+show_intro
 
 echo "========================================="
 echo "   Platform:          $OS"
