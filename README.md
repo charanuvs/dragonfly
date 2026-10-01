@@ -61,7 +61,7 @@ dragonfly/
   tests/
 ```
 
-## Installation (Production Linux Service)
+## Installation
 
 Dragonfly provides an out-of-the-box installer that sets up system dependencies, an isolated application environment (`/opt/dragonfly`), dedicated service user, USB storage formatting and mounting, and systemd services.
 
@@ -108,13 +108,6 @@ Configuration is loaded once at service startup. When you add, edit, or remove c
    ```
 Restarting takes 1–2 seconds. Live recording and watchdog checks resume immediately with the updated configuration.
 
-## Setup (Mac, for development)
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-```
 
 ## License
 
