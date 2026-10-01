@@ -84,9 +84,14 @@ if [ "$OS" = "Darwin" ]; then
     mkdir -p "$BASE_PATH"
     echo "Storage directory created: $BASE_PATH"
 
+    PY_BIN="python3"
+    if [ -x "${INSTALL_DIR:-$HOME/.local/share/dragonfly}/venv/bin/python" ]; then
+        PY_BIN="${INSTALL_DIR:-$HOME/.local/share/dragonfly}/venv/bin/python"
+    fi
+
     if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
         echo "Updating storage path in $CONFIG_FILE..."
-        python3 -c "
+        "$PY_BIN" -c "
 import yaml
 path = '$CONFIG_FILE'
 try:

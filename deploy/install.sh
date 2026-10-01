@@ -430,12 +430,24 @@ fi
 
 # 5. Configuration directory and default config
 echo "== Checking configuration =="
-mkdir -p "$CONFIG_DIR"
+mkdir -p "$CONFIG_DIR" 2>/dev/null || {
+    sudo mkdir -p "$CONFIG_DIR"
+    sudo chown -R "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_DIR" 2>/dev/null || true
+}
+if [ -d "$CONFIG_DIR" ] && [ ! -w "$CONFIG_DIR" ]; then
+    sudo chown -R "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_DIR" 2>/dev/null || true
+fi
+
+PYTHON_VENV="$INSTALL_DIR/venv/bin/python"
+if [ ! -x "$PYTHON_VENV" ]; then
+    PYTHON_VENV="python3"
+fi
+
 if [ ! -f "$CONFIG_DIR/dragonfly.yaml" ]; then
     if [ -f "$SOURCE_DIR/config/dragonfly.example.yaml" ]; then
         cp "$SOURCE_DIR/config/dragonfly.example.yaml" "$CONFIG_DIR/dragonfly.yaml"
         if [ "$OS" = "Darwin" ]; then
-            python3 -c "
+            "$PYTHON_VENV" -c "
 import yaml
 path = '$CONFIG_DIR/dragonfly.yaml'
 try:
