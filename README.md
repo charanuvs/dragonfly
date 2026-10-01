@@ -29,7 +29,24 @@ Once installed:
 - **Config**: `/etc/dragonfly/dragonfly.yaml` (Linux) or `~/.config/dragonfly/dragonfly.yaml` (macOS)
 - **Restart**: `dragonfly-restart`
 - **Update**: `dragonfly-update`
-- **Uninstall**: `dragonfly-uninstall`
+- **Uninstall**: `dragonfly-uninstall` (or `curl -fsSL https://raw.githubusercontent.com/charanuvs/dragonfly/main/deploy/uninstall.sh | bash`)
+
+---
+
+## Releases & Tarball Install
+
+To install from an official release archive rather than curling the main installer script:
+
+```bash
+# 1. Download & unpack the latest release tarball
+curl -fsSL -O https://github.com/charanuvs/dragonfly/releases/latest/download/dragonfly.tar.gz
+tar -xzf dragonfly.tar.gz
+cd dragonfly
+
+# 2. Run the installer
+bash deploy/install.sh         # macOS
+sudo bash deploy/install.sh    # Linux
+```
 
 ---
 
