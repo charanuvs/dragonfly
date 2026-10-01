@@ -5,6 +5,15 @@ dedicated hub host. The hub controls and aggregates data from cameras and other
 sensors, records footage to attached storage, and serves a dashboard on the
 local network.
 
+## Why Dragonfly?
+
+Tired of paying monthly cloud subscriptions just to record your own cameras? Worried about third parties or cloud providers accessing your private camera feeds?
+
+Dragonfly is built with a simple philosophy:
+- **Keep everything 100% local**: Camera streams and sensor events stay on your private network and never route through third-party cloud servers.
+- **Manage your own storage**: Record continuous, gapless footage directly to attached drives with automated ring-buffer retention—no cloud quotas or paywalls.
+- **Complete control**: Your hardware, your network rules, your recordings, and your data.
+
 ## Hardware & Architecture
 
 - **Hub Host** — central hub, always on (mini-PC, home server, or single-board computer)
