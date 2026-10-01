@@ -44,6 +44,79 @@ else
     exit 1
 fi
 
+show_dragonfly_animation() {
+    local G=$'\033[1;32m'
+    local P=$'\033[1;35m'
+    local R=$'\033[0m'
+
+    local f1_0="${P}  .---.  .---.  ${G}   __   ${P}  .---.  .---.  ${R}"
+    local f1_1="${P} /     \\/     \\ ${G} _(  )_ ${P} /     \\/     \\ ${R}"
+    local f1_2="${P}|       )(     | ${G}( (oo) ) ${P}|       )(     |${R}"
+    local f1_3="${P} \\_____/\\_____/ ${G} \\_||_/ ${P} \\_____/\\_____/ ${R}"
+    local f1_4="                ${G}  ||    ${R}"
+    local f1_5="                ${G}  ||    ${R}"
+    local f1_6="                ${G}  \\/    ${R}"
+
+    local f2_0="                ${G}   __   ${R}"
+    local f2_1="${P}  .-==-. .-==-. ${G} _(  )_ ${P}  .-==-. .-==-. ${R}"
+    local f2_2="${P} (  __  X  __  ) ${G}( (oo) ) ${P}(  __  X  __  )${R}"
+    local f2_3="${P}  \\____/ \\____/ ${G} \\_||_/ ${P}  \\____/ \\____/ ${R}"
+    local f2_4="                ${G}  ||    ${R}"
+    local f2_5="                ${G}  ||    ${R}"
+    local f2_6="                ${G}  \\/    ${R}"
+
+    # Check if stdout is an interactive terminal suitable for animation
+    if [ ! -t 1 ] || [ "${TERM:-}" = "dumb" ] || [ "${DRAGONFLY_NO_ANIM:-0}" = "1" ]; then
+        printf "%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n" "$f1_0" "$f1_1" "$f1_2" "$f1_3" "$f1_4" "$f1_5" "$f1_6"
+        return
+    fi
+
+    # Hide cursor
+    printf "\033[?25l"
+
+    # Pre-allocate lines
+    printf "\n\n\n\n\n\n\n"
+
+    # Positions moving back and forth (flutter & flight)
+    local pos_list=(0 2 4 6 8 10 12 14 12 10 8 6 4 2 0 2 4 6 8 10 12 14 12 10 8 6 4 2 0)
+    local idx=0
+
+    for pos in "${pos_list[@]}"; do
+        local pad=""
+        if [ "$pos" -gt 0 ]; then
+            pad=$(printf "%*s" "$pos" "")
+        fi
+        local frame=$(( (idx / 2) % 2 ))
+        ((idx++))
+
+        printf "\033[7A"
+        if [ "$frame" -eq 0 ]; then
+            printf "%s%s\033[K\n" "$pad" "$f1_0"
+            printf "%s%s\033[K\n" "$pad" "$f1_1"
+            printf "%s%s\033[K\n" "$pad" "$f1_2"
+            printf "%s%s\033[K\n" "$pad" "$f1_3"
+            printf "%s%s\033[K\n" "$pad" "$f1_4"
+            printf "%s%s\033[K\n" "$pad" "$f1_5"
+            printf "%s%s\033[K\n" "$pad" "$f1_6"
+        else
+            printf "%s%s\033[K\n" "$pad" "$f2_0"
+            printf "%s%s\033[K\n" "$pad" "$f2_1"
+            printf "%s%s\033[K\n" "$pad" "$f2_2"
+            printf "%s%s\033[K\n" "$pad" "$f2_3"
+            printf "%s%s\033[K\n" "$pad" "$f2_4"
+            printf "%s%s\033[K\n" "$pad" "$f2_5"
+            printf "%s%s\033[K\n" "$pad" "$f2_6"
+        fi
+
+        sleep 0.05
+    done
+
+    # Restore cursor
+    printf "\033[?25h\n"
+}
+
+show_dragonfly_animation
+
 echo "========================================="
 echo "   Dragonfly Hub Service Installer       "
 echo "   Platform:          $OS                "
@@ -60,7 +133,7 @@ if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
 fi
 
 CLEANUP_TMP=""
-trap 'if [ -n "$CLEANUP_TMP" ] && [ -d "$CLEANUP_TMP" ]; then rm -rf "$CLEANUP_TMP"; fi' EXIT
+trap 'printf "\033[?25h"; if [ -n "$CLEANUP_TMP" ] && [ -d "$CLEANUP_TMP" ]; then rm -rf "$CLEANUP_TMP"; fi' EXIT INT TERM
 
 SOURCE_DIR=""
 if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/../pyproject.toml" ]; then
