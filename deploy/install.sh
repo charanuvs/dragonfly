@@ -55,21 +55,48 @@ else
     TMP_DIR=$(mktemp -d)
     CLEANUP_TMP="$TMP_DIR"
 
-    if [ "$VERSION" = "latest" ]; then
-        TARBALL_URL="https://github.com/$REPO/releases/latest/download/dragonfly.tar.gz"
-    else
-        TARBALL_URL="https://github.com/$REPO/releases/download/$VERSION/dragonfly.tar.gz"
+    CURL_AUTH=()
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+        CURL_AUTH=(-H "Authorization: Bearer $GITHUB_TOKEN")
     fi
 
-    echo "Fetching: $TARBALL_URL"
-    if ! curl -fsSL -L "$TARBALL_URL" -o "$TMP_DIR/dragonfly.tar.gz"; then
-        echo "Error: Failed to download release artifact from $TARBALL_URL." >&2
-        echo "Please verify the repository name and release tag." >&2
+    DOWNLOAD_SUCCESS=0
+    if [ "$VERSION" = "latest" ]; then
+        TARBALL_URL="https://github.com/$REPO/releases/latest/download/dragonfly.tar.gz"
+        echo "Fetching release: $TARBALL_URL"
+        if curl -fsSL -L "${CURL_AUTH[@]}" "$TARBALL_URL" -o "$TMP_DIR/dragonfly.tar.gz" 2>/dev/null; then
+            DOWNLOAD_SUCCESS=1
+        else
+            echo "No tagged release found. Downloading latest main branch from $REPO..."
+            TARBALL_URL="https://api.github.com/repos/$REPO/tarball/main"
+            if [ ${#CURL_AUTH[@]} -eq 0 ]; then
+                TARBALL_URL="https://github.com/$REPO/archive/refs/heads/main.tar.gz"
+            fi
+            echo "Fetching: $TARBALL_URL"
+            if curl -fsSL -L "${CURL_AUTH[@]}" "$TARBALL_URL" -o "$TMP_DIR/dragonfly.tar.gz" 2>/dev/null; then
+                DOWNLOAD_SUCCESS=1
+            fi
+        fi
+    else
+        TARBALL_URL="https://github.com/$REPO/releases/download/$VERSION/dragonfly.tar.gz"
+        echo "Fetching: $TARBALL_URL"
+        if curl -fsSL -L "${CURL_AUTH[@]}" "$TARBALL_URL" -o "$TMP_DIR/dragonfly.tar.gz" 2>/dev/null; then
+            DOWNLOAD_SUCCESS=1
+        fi
+    fi
+
+    if [ "$DOWNLOAD_SUCCESS" -ne 1 ]; then
+        echo "Error: Failed to download Dragonfly artifact from $REPO." >&2
+        echo "If this repository is private, pass a GitHub token: GITHUB_TOKEN=... curl ... | sudo -E bash" >&2
+        echo "Once the repository is public or has a release published, no token is required." >&2
         exit 1
     fi
 
     tar -xzf "$TMP_DIR/dragonfly.tar.gz" -C "$TMP_DIR"
-    if [ -d "$TMP_DIR/dragonfly" ]; then
+    FOUND_SOURCE=$(find "$TMP_DIR" -maxdepth 2 -name "pyproject.toml" -exec dirname {} \; | head -n 1)
+    if [ -n "$FOUND_SOURCE" ] && [ -d "$FOUND_SOURCE" ]; then
+        SOURCE_DIR="$FOUND_SOURCE"
+    elif [ -d "$TMP_DIR/dragonfly" ]; then
         SOURCE_DIR="$TMP_DIR/dragonfly"
     else
         SOURCE_DIR="$TMP_DIR"
