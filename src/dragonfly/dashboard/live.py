@@ -4,7 +4,7 @@ Unlike the recorder (always running, opt-in via config) and the heartbeat
 (always running, cheap TCP check), the live view only starts an ffmpeg
 process when someone actually opens the dashboard's live page, and stops it
 again after a period with no viewers. An HD stream is heavier than the other
-two both on the Pi and on the camera's limited concurrent-connection budget,
+two both on the host and on the camera's limited concurrent-connection budget,
 so it isn't worth keeping alive when nobody's watching.
 
 Uses `-c:v copy` (remux, not re-encode) into short HLS segments — cheap on

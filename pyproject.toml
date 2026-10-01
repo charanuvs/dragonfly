@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Installed only on the Pi; opencv/picamera2 don't need to be on the Mac.
+# Required for camera capture and frame processing on the hub host.
 camera = [
     "opencv-python-headless>=4.9",
 ]

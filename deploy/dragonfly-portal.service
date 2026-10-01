@@ -9,9 +9,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=charan
-WorkingDirectory=/home/charan/dragonfly
-ExecStart=/home/charan/dragonfly/.venv/bin/dragonfly-portal
+User=dragonfly
+Group=dragonfly
+WorkingDirectory=/opt/dragonfly
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/dragonfly/venv/bin/dragonfly-portal
 Restart=on-failure
 RestartSec=5
 

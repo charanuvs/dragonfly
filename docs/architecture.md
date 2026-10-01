@@ -2,18 +2,18 @@
 
 ## Overview
 
-Dragonfly is a hub-and-spoke system. The Raspberry Pi is the hub: it is the
-only device that maintains full state, the only device that writes to
-storage, and the only device with any path to the internet. Everything else —
-cameras, environmental sensors, door/window sensors, whatever gets added later
+Dragonfly is a hub-and-spoke system. A dedicated Linux machine (mini-PC, home server,
+or single-board computer) acts as the hub: it is the only device that maintains full state,
+the only device that writes to persistent storage, and the only device with any path to the internet.
+Everything else — cameras, environmental sensors, door/window sensors, whatever gets added later
 — is a spoke that only talks to the hub.
 
-On the Pi itself, the hub is split into **two independent processes** —
+On the hub host itself, the hub is split into **two independent processes** —
 capture and portal — coordinating only over MQTT, not by sharing memory:
 
 ```
                     ┌───────────────────────────────────────┐
-                    │              Raspberry Pi                │
+                    │            Hub Host (Linux)           │
                     │                                           │
    isolated  ───────┤  MQTT broker (Mosquitto)                  │
    sensor    ◄──────┤  ┌──────────────┐      ┌────────────────┐│
@@ -22,7 +22,7 @@ capture and portal — coordinating only over MQTT, not by sharing memory:
                     │  │  live ffmpeg) │      │   watchdog)     ││     (internet,
                     │  │               │◄─────┤  watches capture ││      your Mac, phone)
                     │  └──────────────┘ check └────────────────┘│
-                    │  external HDD (recordings)                │
+                    │  external storage (recordings)            │
                     └───────────────────────────────────────┘
 ```
 
@@ -47,11 +47,11 @@ Used by both processes, contains no process-specific logic itself.
   of "what devices exist and are they alive" builds its own instance from
   the MQTT stream — there's no single shared registry object anymore, since
   there's no single process to own it.
-- **`eventbus.py`** — thin wrapper around an MQTT broker running on the Pi
-  itself (Mosquitto). Modules publish readings/events to topics like
+- **`eventbus.py`** — thin wrapper around an MQTT broker running on the hub
+  host itself (Mosquitto). Modules publish readings/events to topics like
   `dragonfly/<module_id>/state`; anyone who cares subscribes. MQTT is used
   because it works over the isolated network with no internet dependency,
-  is trivial to implement on constrained devices (ESP32, Pi Zero, etc.), and
+  is trivial to implement on constrained devices (ESP32, microcontrollers, etc.), and
   — critically for the two-process split — decouples publishers from
   subscribers entirely, which is exactly what capture/portal needed.
 - **`sysinfo.py`** — CPU/mem/disk stats, used only by portal (self-contained,
@@ -111,7 +111,7 @@ per device type: `module_id`, `module_type`, `start()`, `stop()`, and a
 callback that publishes readings onto the event bus.
 
 - **`modules/camera/`** — camera modules. The Outdoor West (`OW`) camera is
-  RTSP/ONVIF, so the hub can't wire it directly like a Pi Camera Module.
+  RTSP/ONVIF.
   Recording is an opt-in (`record: true`) module, **`recorder.py`**: an
   ffmpeg-based segmented recorder with gapless cutover and storage-watermark
   cleanup — see [`recording.md`](recording.md) for the full design and the
@@ -121,16 +121,16 @@ callback that publishes readings onto the event bus.
 - Future sensor types are added as new subpackages under `modules/`, each a
   small driver that reads hardware and calls `publish()`.
 
-Physical topology for modules is flexible: a sensor can be a peripheral wired
-directly to the hub Pi (e.g. a Pi Camera Module), or a separate small device
-(ESP32, Pi Zero W) on the isolated network that speaks MQTT to the hub. Either
+Physical topology for modules is flexible: a sensor can be a peripheral connected
+directly to the hub host (e.g. USB/serial), or a separate small device
+(ESP32, microcontroller node) on the isolated network that speaks MQTT to the hub. Either
 way it looks the same to the hub service.
 
 ### Dashboard (`src/dragonfly/dashboard/`)
 
 A FastAPI app serving a status page (heartbeat/online-offline per module
 today; live views — camera snapshots/streams, sensor readings, recording
-history — as those modules are built out). Binds only to the Pi's
+history — as those modules are built out). Binds only to the hub host's
 LAN-reachable interface — never to the isolated sensor interface, never to a
 tailscale/public interface without deliberately deciding to do so later.
 
@@ -173,7 +173,7 @@ live view and a recording cutover overlap and one fails.
 
 ### Storage
 
-The external HDD is mounted on the Pi and holds:
+The external storage is mounted on the hub host and holds:
 
 - Recorded video (`recordings/<module_id>/<date>/...`)
 - A local database (SQLite to start) for sensor readings/events and the

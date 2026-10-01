@@ -134,7 +134,7 @@ sudo chown -R charan:charan /mnt/dragonfly-hdd   # ext4 has real ownership; the
                                # options instead — those don't apply to ext4)
 ```
 
-`nofail` matters: without it, a missing/failed drive can hang the Pi's boot
+`nofail` matters: without it, a missing/failed drive can hang the system's boot
 entirely waiting for a mount that'll never come.
 
 The final `2` in the fstab line is the fsck pass number — it tells systemd
@@ -144,7 +144,7 @@ does get corrupted despite the journal.
 ## Auto-mounting on plug-in, and what happens if the drive disappears
 
 The `/etc/fstab` entry above only gets applied at boot — if you unplug and
-replug the drive while Phila is already running, nothing remounts it
+replug the drive while the hub host is already running, nothing remounts it
 automatically without the udev rule below.
 
 **Auto-mount whenever this specific drive is plugged in** (not just at
@@ -219,8 +219,8 @@ It gets invoked from two places, deliberately:
   repair anything while portal is down (e.g. a reboot where the drive
   reappears before portal starts).
 
-The watchdog runs unprivileged (inside portal, as your normal user) but
-`umount`/`mount` need root, so `install_pi.sh` installs the script
+The watchdog runs unprivileged (inside portal, as the service user) but
+`umount`/`mount` need root, so the installer sets up the script
 **root-owned at `/usr/local/sbin/dragonfly-mount-repair`** with a
 `/etc/sudoers.d` rule scoped to exactly that one command. Installing it
 outside the repo checkout is the point: a NOPASSWD sudo rule aimed at a
@@ -283,11 +283,7 @@ isn't as time-sensitive as detecting the outage was). Heartbeat and live
 view are unaffected throughout, since they never depended on the drive in
 the first place.
 
-Redeploy the unit file the normal way after pulling
-(`bash deploy/install_pi.sh` re-copies it, or manually
-`sudo cp deploy/dragonfly-capture.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl restart dragonfly-capture`).
-
-All of this is configurable per-camera in `config/dragonfly.yaml`
+All of this is configurable per-camera in `/etc/dragonfly/dragonfly.yaml`
 (`fps`, `bitrate_kbps`, `segment_seconds`, `overlap_seconds`,
 `high_watermark_pct`, `low_watermark_pct`, and the optional
 `retention_days`) — adjust to trade off quality vs. retention as your

@@ -1,5 +1,6 @@
-# Copy this to config/dragonfly.yaml on the Pi and adjust for your setup.
-# config/dragonfly.yaml is gitignored — never commit the real one.
+# Copy this to /etc/dragonfly/dragonfly.yaml on the hub host (or config/dragonfly.yaml
+# for local dev) and adjust for your setup.
+# /etc/dragonfly/dragonfly.yaml is per-host configuration — never commit production credentials.
 
 mqtt:
   host: localhost
@@ -10,11 +11,11 @@ storage:
   database_path: /mnt/dragonfly-hdd/dragonfly.db
   # The recorder checks this is actually mounted before every write — see
   # docs/recording.md. Set to null if you're not using a separate mount
-  # (e.g. recording straight to the SD card) to skip the check.
+  # (e.g. recording straight to internal storage) to skip the check.
   mount_point: /mnt/dragonfly-hdd
 
 dashboard:
-  bind_host: 0.0.0.0   # fine to leave as-is; the Pi's IoT-network interface
+  bind_host: 0.0.0.0   # fine to leave as-is; the hub's IoT-network interface
                         # never gets a route to the dashboard anyway (see docs/network.md)
   port: 8000
 
@@ -30,7 +31,7 @@ watchdog:
                               # recording is judged stopped
   # Auto-repair a dead/missing mount (clears a zombie mount, re-runs
   # mount -a). Runs via sudo against a root-owned script installed by
-  # install_pi.sh. Set false to handle mounts yourself.
+  # the installer. Set false to handle mounts yourself.
   repair_storage: true
   repair_command: /usr/local/sbin/dragonfly-mount-repair
   repair_min_interval_s: 60

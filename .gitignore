@@ -6,6 +6,10 @@ __pycache__/
 venv/
 .env
 *.log
+build/
+dist/
+*.tar.gz
+*.whl
 
 # Local, per-deployment config and secrets — never commit these
 config/dragonfly.yaml

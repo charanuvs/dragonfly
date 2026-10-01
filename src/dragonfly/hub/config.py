@@ -6,6 +6,7 @@ is intentionally small right now; it grows as real modules are added.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import yaml
@@ -81,7 +82,7 @@ class WatchdogConfig(BaseModel):
     recording_grace_s: float = 60.0
 
     # When storage is found unmounted or unreadable, try to repair it by
-    # running this (via sudo — see deploy/install_pi.sh, which installs it
+    # running this (via sudo — see deploy/install.sh, which installs it
     # root-owned in /usr/local/sbin with a narrowly-scoped sudoers rule).
     # Set repair_storage: false to disable and handle mounts manually.
     repair_storage: bool = True
@@ -99,11 +100,21 @@ class HubConfig(BaseModel):
     cameras: list[CameraConfig] = []
 
 
-def load_config(path: str | Path = "config/dragonfly.yaml") -> HubConfig:
-    path = Path(path)
-    if not path.exists():
+def load_config(path: str | Path | None = None) -> HubConfig:
+    if path is not None:
+        target_path = Path(path)
+    elif "DRAGONFLY_CONFIG" in os.environ:
+        target_path = Path(os.environ["DRAGONFLY_CONFIG"])
+    elif Path("/etc/dragonfly/dragonfly.yaml").exists():
+        target_path = Path("/etc/dragonfly/dragonfly.yaml")
+    elif Path("config/dragonfly.yaml").exists():
+        target_path = Path("config/dragonfly.yaml")
+    else:
         # Fall back to defaults so the hub can boot in a fresh dev environment.
         return HubConfig()
-    with path.open() as f:
+
+    if not target_path.exists():
+        return HubConfig()
+    with target_path.open() as f:
         raw = yaml.safe_load(f) or {}
     return HubConfig(**raw)

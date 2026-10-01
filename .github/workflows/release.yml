@@ -1,0 +1,78 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v0.1.0)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build Release Tarball & Publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install packaging tools
+        run: |
+          python -m pip install --upgrade pip build wheel
+
+      - name: Build Python wheel and sdist
+        run: |
+          python -m build
+
+      - name: Assemble release tarball
+        id: package
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [ -z "$TAG" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.version }}"
+            if [ -z "$TAG" ]; then
+              TAG="v$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+            fi
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          # Stage files inside directory named dragonfly
+          STAGING_DIR="release_staging/dragonfly"
+          mkdir -p "$STAGING_DIR"
+
+          cp -r dist "$STAGING_DIR/"
+          cp -r deploy "$STAGING_DIR/"
+          cp -r config "$STAGING_DIR/"
+          cp pyproject.toml README.md LICENSE "$STAGING_DIR/"
+          echo "$TAG" > "$STAGING_DIR/VERSION"
+
+          # Create both generic 'dragonfly.tar.gz' and versioned tarball
+          tar -czf dragonfly.tar.gz -C release_staging dragonfly
+          cp dragonfly.tar.gz "dragonfly-${TAG}.tar.gz"
+
+          sha256sum dragonfly.tar.gz > dragonfly.tar.gz.sha256
+          sha256sum "dragonfly-${TAG}.tar.gz" > "dragonfly-${TAG}.tar.gz.sha256"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.package.outputs.tag }}
+          name: Dragonfly ${{ steps.package.outputs.tag }}
+          files: |
+            dragonfly.tar.gz
+            dragonfly.tar.gz.sha256
+            dragonfly-*.tar.gz
+            dragonfly-*.tar.gz.sha256
+            dist/*.whl
+          generate_release_notes: true

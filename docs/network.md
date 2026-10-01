@@ -3,7 +3,7 @@
 ## Goal
 
 - Sensors/cameras live on a network with no route to the internet.
-- The Raspberry Pi hub is the only device that bridges that network and the
+- The hub host is the only device that bridges that network and the
   internet-connected home LAN.
 - The dashboard is reachable from the home LAN (phone, Mac, etc.) but never
   from the internet.
@@ -27,14 +27,14 @@ Internet
 └──┬─────────────────────────────┘
    │  (Ethernet, main LAN)
 ┌──▼───────────────────┐     Wi-Fi (IoT SSID)
-│  Raspberry Pi (hub)   ├───────────────────► ESP32 / Pi Zero sensors, IP cams
+│  Hub Host (Linux)    ├───────────────────► ESP32 sensors, IP cams
 │  - eth0: main LAN      │
 │  - wlan0: IoT network  │
-│  - external HDD        │
+│  - external storage    │
 └────────────────────────┘
 ```
 
-The Pi is **dual-homed**: wired Ethernet to the Deco's main network (internet
+The hub host is **dual-homed**: wired Ethernet to the Deco's main network (internet
 + reachable from your other LAN devices for the dashboard), and Wi-Fi joined
 to the Deco's IoT/guest SSID (talks to sensors/cameras only). No other device
 needs to straddle both networks.
@@ -47,7 +47,7 @@ needs to straddle both networks.
 2. **Turn off "allow guests to access my local network"** (or equivalent) so
    IoT-network clients cannot initiate connections to your main LAN clients.
    This is the isolation boundary between sensors and your phones/laptops.
-3. **Join the Pi's Wi-Fi to that SSID** in addition to its wired connection
+3. **Join the hub host's Wi-Fi to that SSID** in addition to its wired connection
    to the main network. Join every sensor/camera to that same SSID.
 4. **Restrict internet access for the IoT SSID's clients**, if your Deco
    firmware supports it (`Access Control` / `Parental Controls` → select the
@@ -65,8 +65,8 @@ Two ways to close that gap, in increasing order of effort:
 1. **Apply per-device "block internet" access control** to every
    sensor/camera in the Deco app, if your firmware exposes it. Low effort,
    but easy to forget for a new device.
-2. **Let the Pi enforce it instead of relying on the router.** Since sensors
-   can only usefully reach the hub (they speak MQTT to the Pi, nothing else),
+2. **Let the hub host enforce it instead of relying on the router.** Since sensors
+   can only usefully reach the hub (they speak MQTT to the hub, nothing else),
    this is mostly moot in practice — but if you want a hard guarantee later,
    the fallback is a small managed switch with real VLANs (or a second
    router in AP-only mode with no WAN), which was considered and set aside
@@ -81,19 +81,16 @@ Keep it simple to start:
 - IoT network: Deco assigns its own subnet automatically when you enable it
   (commonly a separate range like `192.168.69.0/24`) — no manual config
   needed.
-- Give the Pi a **DHCP reservation** on the main LAN in the Deco app so its
+- Give the hub host a **DHCP reservation** on the main LAN in the Deco app so its
   LAN IP (and therefore the dashboard URL) never changes.
 
-## Dashboard exposure
+## Dashboard exposure & remote access
 
-The dashboard (`src/dragonfly/dashboard`) binds to the Pi's main-LAN
+The dashboard (`src/dragonfly/dashboard`) binds to the hub host's main-LAN
 interface only (`eth0`'s address), on a port not forwarded anywhere on the
-Archer modem. It is reachable as `http://<pi-lan-ip>:8000` from any device on
-your home network, and not reachable from the internet, ever, by construction
-(no port forward = no path in).
+Archer modem. It is reachable as `http://<hub-lan-ip>:8000` from any device on
+your home network, and not reachable from the public internet (no port forward = no path in).
 
-## Remote access for development
+### Viewing feeds away from home (Tailscale Mesh Network)
 
-Internet exposure for the Pi itself is limited to a single outbound
-Tailscale connection — see [`deployment.md`](deployment.md). No inbound ports
-are opened on the Archer modem or the Deco for this project.
+To securely view live camera feeds and dashboard events when away from home without exposing any ports to the public internet, join the hub host and your mobile phone/laptop to a private [Tailscale](https://tailscale.com) mesh network. Because Tailscale establishes point-to-point encrypted tunnels, you can access `http://<tailscale-ip-or-magicdns>:8000` directly with zero public exposure.

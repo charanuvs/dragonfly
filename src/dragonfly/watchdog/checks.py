@@ -150,7 +150,7 @@ def repair_storage(command: str, timeout_s: float = 60.0) -> dict:
     The heavy lifting is in the shell script this points at — it clears a
     dead mount with `umount -l` and re-runs `mount -a`. It needs root, and
     the watchdog runs unprivileged inside portal, hence sudo with a sudoers
-    rule scoped to exactly this one command. `install_pi.sh` places the
+    rule scoped to exactly this one command. The installer places the
     script root-owned under /usr/local/sbin deliberately: if it lived in the
     user-writable repo checkout, a NOPASSWD sudo rule pointing at it would
     effectively be passwordless root for that user.

@@ -1,6 +1,6 @@
 """Local-LAN monitoring dashboard (FastAPI).
 
-Bound to the Pi's LAN interface only (config.dashboard.bind_host) — see
+Bound to the hub host's LAN interface only (config.dashboard.bind_host) — see
 docs/network.md. Runs in the portal process (hub/portal_main.py), which is
 independent from the capture process (hub/capture_main.py) that actually
 owns the heartbeat/recorder/live-stream ffmpeg — see docs/architecture.md.
@@ -250,7 +250,7 @@ _INDEX_HTML = """<!doctype html>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js"></script>
   <script>
     // Purely client-side: polls /api/system every second and accumulates
-    // points itself — nothing persisted on the Pi, resets whenever this page
+    // points itself — nothing persisted on the host, resets whenever this page
     // reloads. Capped to the last 5 minutes so a tab left open for hours
     // doesn't grow without bound.
     const MAX_POINTS = 300;
