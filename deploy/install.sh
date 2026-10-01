@@ -365,7 +365,15 @@ elif [ "$OS" = "Darwin" ]; then
     fi
     $RUN_AS_USER brew install mosquitto ffmpeg
     echo "Ensuring mosquitto broker is running via brew services..."
-    $RUN_AS_USER brew services start mosquitto || true
+    BREW_PREFIX="$($RUN_AS_USER brew --prefix)"
+    if [ -d "$BREW_PREFIX/etc/mosquitto" ] && [ ! -f "$BREW_PREFIX/etc/mosquitto/mosquitto.conf" ]; then
+        if [ -f "$BREW_PREFIX/etc/mosquitto/mosquitto.conf.example" ]; then
+            cp "$BREW_PREFIX/etc/mosquitto/mosquitto.conf.example" "$BREW_PREFIX/etc/mosquitto/mosquitto.conf"
+        else
+            touch "$BREW_PREFIX/etc/mosquitto/mosquitto.conf"
+        fi
+    fi
+    $RUN_AS_USER brew services restart mosquitto || $RUN_AS_USER brew services start mosquitto || true
 fi
 
 # 3. Create dedicated system user
@@ -390,9 +398,20 @@ if [ "$OS" = "Linux" ]; then
 elif [ "$OS" = "Darwin" ]; then
     launchctl unload "$USER_HOME/Library/LaunchAgents/com.dragonfly.capture.plist" 2>/dev/null || true
     launchctl unload "$USER_HOME/Library/LaunchAgents/com.dragonfly.portal.plist" 2>/dev/null || true
+    if [ -d "$INSTALL_DIR" ] && [ ! -w "$INSTALL_DIR" ]; then
+        echo "Fixing permissions on $INSTALL_DIR..."
+        sudo chown -R "$SERVICE_USER:$SERVICE_GROUP" "$INSTALL_DIR" 2>/dev/null || true
+    fi
 fi
 
-mkdir -p "$INSTALL_DIR" "$INSTALL_DIR/logs"
+mkdir -p "$INSTALL_DIR" "$INSTALL_DIR/logs" 2>/dev/null || {
+    sudo mkdir -p "$INSTALL_DIR" "$INSTALL_DIR/logs"
+    sudo chown -R "$SERVICE_USER:$SERVICE_GROUP" "$INSTALL_DIR" 2>/dev/null || true
+}
+if [ -d "$INSTALL_DIR" ] && [ ! -w "$INSTALL_DIR" ]; then
+    sudo chown -R "$SERVICE_USER:$SERVICE_GROUP" "$INSTALL_DIR" 2>/dev/null || true
+fi
+
 if [ ! -d "$INSTALL_DIR/venv" ]; then
     python3 -m venv "$INSTALL_DIR/venv"
 fi
@@ -480,13 +499,16 @@ cp "$SOURCE_DIR/deploy/uninstall.sh" "$BIN_DIR/dragonfly-uninstall" 2>/dev/null 
 chmod +x "$BIN_DIR/dragonfly-uninstall" 2>/dev/null || sudo chmod +x "$BIN_DIR/dragonfly-uninstall"
 
 # Install update CLI helper
-cat <<'EOF' > "$BIN_DIR/dragonfly-update"
+cat <<'EOF' > /tmp/dragonfly-update.$$
 #!/usr/bin/env bash
 set -euo pipefail
 echo "== Checking for and applying latest Dragonfly update =="
 curl -fsSL https://raw.githubusercontent.com/charanuvs/dragonfly/main/deploy/install.sh | DRAGONFLY_SKIP_MOUNT=1 bash
 EOF
-chmod 755 "$BIN_DIR/dragonfly-update" 2>/dev/null || sudo chmod 755 "$BIN_DIR/dragonfly-update"
+chmod 755 /tmp/dragonfly-update.$$
+cp /tmp/dragonfly-update.$$ "$BIN_DIR/dragonfly-update" 2>/dev/null || \
+    sudo cp /tmp/dragonfly-update.$$ "$BIN_DIR/dragonfly-update"
+rm -f /tmp/dragonfly-update.$$
 
 # 7. Interactive USB Mount Setup
 if [ "$SKIP_MOUNT" != "1" ]; then
