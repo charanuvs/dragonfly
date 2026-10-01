@@ -86,6 +86,9 @@ class LiveStreamManager:
         return stream.out_dir / "index.m3u8"
 
     def _start_stream(self, stream: _CameraStream) -> None:
+        if "<camera-ip>" in stream.rtsp_url or "<user>" in stream.rtsp_url:
+            log.warning("cannot start live stream for unconfigured rtsp_url: %s", stream.rtsp_url)
+            return
         stream.out_dir.mkdir(parents=True, exist_ok=True)
         for f in stream.out_dir.glob("*"):
             f.unlink(missing_ok=True)

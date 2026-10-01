@@ -36,30 +36,22 @@ watchdog:
   repair_command: /usr/local/sbin/dragonfly-mount-repair
   repair_min_interval_s: 60
 
-cameras:
-  - id: OW
-    name: "Outdoor West"
-    # RTSP/ONVIF stream URL, credentials included — this file is gitignored,
-    # never commit the real one.
-    rtsp_url: "rtsp://<user>:<password>@<camera-ip>:554/stream1"
-    poll_interval_s: 15
-    timeout_s: 3
+# Cameras: define your cameras here. Kept empty by default so fresh installs
+# start up cleanly without attempting to connect to placeholder streams.
+cameras: []
 
-    # Recording — see docs/recording.md for the storage math behind these
-    # numbers. Cleanup is storage-usage-based: once the drive hits
-    # high_watermark_pct, the oldest segment files get deleted one at a time
-    # until usage is back down to low_watermark_pct. Retention in days just
-    # falls out of whatever bitrate/fps you pick below and how big your
-    # drive is — no day count to hand-tune. Raise bitrate for better quality
-    # if you attach bigger storage.
-    record: true
-    fps: 10
-    bitrate_kbps: 200
-    segment_seconds: 300
-    overlap_seconds: 10
-    high_watermark_pct: 90
-    low_watermark_pct: 80
-    # Optional hard ceiling independent of free space (e.g. privacy/legal —
-    # never keep footage past N days even if there's room). Leave unset to
-    # let storage usage be the only thing that drives deletion.
-    # retention_days: 30
+# Example camera configuration:
+# cameras:
+#   - id: front_door
+#     name: "Front Door"
+#     rtsp_url: "rtsp://admin:password@192.168.1.50:554/stream1"
+#     recording_rtsp_url: "rtsp://admin:password@192.168.1.50:554/stream2"
+#     poll_interval_s: 15
+#     timeout_s: 3
+#     record: true
+#     fps: 10
+#     bitrate_kbps: 200
+#     segment_seconds: 300
+#     overlap_seconds: 10
+#     high_watermark_pct: 90
+#     low_watermark_pct: 80

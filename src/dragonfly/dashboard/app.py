@@ -364,6 +364,16 @@ _INDEX_HTML = """<!doctype html>
       return String(path).split('/').slice(-3).join('/');
     }
 
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
     function renderDetails(details, skip = []) {
       if (!details) return '';
       const keys = Object.keys(details).filter(k => !skip.includes(k)).sort((a, b) => {
@@ -375,7 +385,7 @@ _INDEX_HTML = """<!doctype html>
         if (v === null) return '';
         const label = DETAIL_LABELS[k] || k.replace(/_/g, ' ');
         const bad = k === 'error' || (k === 'full' && details[k]);
-        return `<div class="meta"${bad ? ' style="color:#e74c3c"' : ''}>${label}: ${v}</div>`;
+        return `<div class="meta"${bad ? ' style="color:#e74c3c"' : ''}>${escapeHtml(label)}: ${escapeHtml(v)}</div>`;
       }).filter(Boolean);
       return rows.join('');
     }
@@ -388,9 +398,10 @@ _INDEX_HTML = """<!doctype html>
         grid.innerHTML = '<p class="empty">No modules reporting yet.</p>';
         return;
       }
-      grid.innerHTML = modules.map(m => `
+      const hasCameras = modules.some(m => m.module_type.includes('camera') && m.module_id.charAt(0) !== '_');
+      const cards = modules.map(m => `
         <div class="card">
-          <div class="name">${m.name}</div>
+          <div class="name">${escapeHtml(m.name)}</div>
           <div class="status">
             <span class="dot ${m.online ? 'online' : 'offline'}"></span>
             ${m.online ? 'Online' : 'Offline'}
@@ -403,7 +414,7 @@ _INDEX_HTML = """<!doctype html>
           </div>
           ${m.recording_last_segment ? `
           <div class="meta file">
-            <span class="filename">${segmentLabel(m.recording_last_segment)}</span>
+            <span class="filename">${escapeHtml(segmentLabel(m.recording_last_segment))}</span>
             ${m.details && m.details.newest_size_bytes
               ? ` &middot; ${fmtBytes(m.details.newest_size_bytes)}` : ''}
             ${m.details && m.details.newest_age_s !== undefined
@@ -416,9 +427,22 @@ _INDEX_HTML = """<!doctype html>
           </div>` : ''}
           ${renderDetails(m.details, RECORDING_DETAIL_KEYS)}
           ${m.module_type.includes('camera') && m.module_id.charAt(0) !== '_'
-            ? `<div class="meta"><a href="/live/${m.module_id}" style="color:#4da3ff">Live view &rarr;</a></div>` : ''}
+            ? `<div class="meta"><a href="/live/${escapeHtml(m.module_id)}" style="color:#4da3ff">Live view &rarr;</a></div>` : ''}
         </div>
-      `).join('');
+      `);
+
+      if (!hasCameras) {
+        cards.push(`
+          <div class="card" style="border-style:dashed; opacity:0.85">
+            <div class="name">No Cameras Configured</div>
+            <div class="meta" style="margin-top:0.5rem; line-height:1.5">
+              Add your RTSP camera streams to <code style="color:#4da3ff; background:#222; padding:2px 4px; border-radius:3px">dragonfly.yaml</code>, then restart the services.
+            </div>
+          </div>
+        `);
+      }
+
+      grid.innerHTML = cards.join('');
     }
     refresh();
     setInterval(refresh, 5000);

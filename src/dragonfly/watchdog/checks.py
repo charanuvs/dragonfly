@@ -27,6 +27,13 @@ from dragonfly.modules.camera.rtsp_camera import parse_rtsp_target
 
 def check_camera(rtsp_url: str, timeout_s: float = 3.0) -> dict:
     """Is the camera reachable on its RTSP port right now?"""
+    if "<camera-ip>" in rtsp_url or "<user>" in rtsp_url:
+        return {
+            "online": False,
+            "host": "<unconfigured>",
+            "port": 554,
+            "error": "unconfigured_url",
+        }
     try:
         host, port = parse_rtsp_target(rtsp_url)
     except ValueError as exc:

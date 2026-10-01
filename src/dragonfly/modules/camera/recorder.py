@@ -219,6 +219,10 @@ class SegmentedRecorder(SensorModule):
         dt = datetime.fromtimestamp(boundary_epoch).astimezone()
         path = compute_segment_path(dt, self.root, self.segment_seconds)
 
+        if "<camera-ip>" in self.rtsp_url or "<user>" in self.rtsp_url:
+            self._publish_recording_state(active=False, error="unconfigured_url", ts=time.time())
+            return
+
         # Check the drive is actually mounted before touching the
         # filesystem at all. Without this, mkdir() below wouldn't fail if
         # the drive isn't mounted — it would just silently create
