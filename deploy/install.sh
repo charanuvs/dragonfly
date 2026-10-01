@@ -12,7 +12,119 @@ set -euo pipefail
 REPO="${DRAGONFLY_REPO:-charanuvs/dragonfly}"
 VERSION="${DRAGONFLY_VERSION:-latest}"
 SKIP_MOUNT="${DRAGONFLY_SKIP_MOUNT:-0}"
+PREVIEW_ONLY=0
+
+for arg in "$@"; do
+    case "$arg" in
+        --preview|--anim|-p) PREVIEW_ONLY=1 ;;
+    esac
+done
+
 OS="$(uname -s)"
+
+if [ "$PREVIEW_ONLY" -eq 1 ]; then
+    show_dragonfly_animation() {
+        local G=$'\033[1;32m'
+        local P=$'\033[1;35m'
+        local W=$'\033[1;37m'
+        local Y=$'\033[1;33m'
+        local S=$'\033[32m'
+        local R=$'\033[0m'
+
+        local d1_0=" ${P}⢀⠤⠒⠉⠉⠉⠑⠢⣀${R}       ${P}⣀⠤⠊⠉⠉⠉⠒⠤⡀${R} "
+        local d1_1="${P}⡰⠁  ⢀⠤⠒⠊⠉⠙⢆${R}   ${P}⡰⠋⠉⠑⠒⠤⣀  ⠈⢆${R}"
+        local d1_2="${P}⡇ ⡠⠊   ⠠ ⠄ ⠂ ⢹${R} ${G}⣠⣄${R} ${P}⡇ ⠐ ⠠ ⠄  ⠑⢄ ⢸${R}"
+        local d1_3="${P}⠱⣀⠣⣀  ⠠ ⠄  ⢀⡸${R}${G}⢸⣿⣿⡇${R}${P}⢇⡀  ⠐ ⠠  ⣀⠜⣀⠎${R}"
+        local d1_4="  ${P}⠉⠒⠒⠒⠊⠉⠉   ${G}⠙⠿⠋${R}   ${P}⠉⠉⠑⠒⠒⠒⠉${R}  "
+        local d1_5="                 ${G} ⣾⣿⣷${R} "
+        local d1_6="                 ${G} ⢸⣿⣿⡇${R} "
+        local d1_7="                 ${G} ⢸⣿⣿⡇${R} "
+        local d1_8="                 ${G} ⢸⣿⣿⡇${R} "
+        local d1_9="                 ${G}  ⠙⠧${R} "
+
+        local d2_0="                 ${G} ⣠⣄${R}  "
+        local d2_1=" ${P}⣀⠤⠒⠊⠉⠉⠑⠒⠤⣀${R}   ${G}⢸⣿⣿⡇${R}   ${P}⣀⠤⠒⠊⠉⠉⠑⠒⠤⣀${R} "
+        local d2_2="${P}⡰⠁  ⢀⠤⠒⠊⠉⠉⢹${R}  ${G}⠙⠿⠋${R}  ${P}⡏⠉⠉⠑⠒⠤⣀  ⠈⢆${R}"
+        local d2_3="${P}⠱⣀⠣⣀    ⠠ ⠄ ⢀⡸${R} ${G} ⣾⣿⣷${R} ${P}⢇⡀ ⠐ ⠠   ⣀⠜⣀⠎${R}"
+        local d2_4="  ${P}⠉⠒⠒⠒⠉⠉⠉⠉   ${G} ⢸⣿⣿⡇${R}   ${P}⠉⠉⠉⠉⠒⠒⠒⠉${R}  "
+        local d2_5="                 ${G} ⢸⣿⣿⡇${R} "
+        local d2_6="                 ${G} ⢸⣿⣿⡇${R} "
+        local d2_7="                 ${G} ⢸⣿⣿⡇${R} "
+        local d2_8="                 ${G}  ⠙⠧${R}  "
+        local d2_9="                     "
+
+        local dl_0="        ${W}⠁ ⠂ ⠄${R}      "
+        local dl_1="    ${W}⠐ ⠠ ⢀ ⡀ ⠠ ⠐${R}  ${W}⠁ *${R}"
+        local dl_2="  ${W}⠂ ⠠${W}⢀⡠⠤⠤⠤⣀⡀${W}⠄ ⠐${R}     ${W}·${R}"
+        local dl_3=" ${W}⠄ ⡀${W}⡰⠊  ${Y}⢀⡀${W}  ⠈⢆${W}⠠ ⠂${R}   ${W}*${R}"
+        local dl_4="${W}⠠ ⠐${W}⡇   ${Y}⢸⣿⡇${W}   ⢸${W}⡀ ⠄${R} "
+        local dl_5=" ${W}⠄ ⡀${W}⠳⡄ ${Y}⠈⠉${W}  ⢀⡠⠊${W}⠠ ⠂${R} "
+        local dl_6="  ${W}⠂ ⠄${W}⠈⠉⠒⠒⠉⠁${W} ⠐ ⠠${R}  "
+        local dl_7="       ${S}⢀⣸⣿⣇⡀${R}      "
+        local dl_8="        ${S}⢸⣿⣿⡇${R}      "
+        local dl_9="       ${S}⠴⠿⠿⠿⠿⠧${R}     "
+
+        printf "\033[?25l\n\n\n\n\n\n\n\n\n\n"
+        local pos_list=(0 1 2 3 4 5 6 7 8 9 10 9 8 7 6 5 4 3 2 1 0 1 2 3 4 5 6 7 8 9 10 9 8 7 6 5 4 3 2 1 0)
+        local step=0
+        for pos in "${pos_list[@]}"; do
+            local df_pad=""
+            if [ "$pos" -gt 0 ]; then df_pad=$(printf "%*s" "$pos" ""); fi
+            local gap_len=$(( 11 - pos ))
+            local frame=$(( (step / 2) % 2 ))
+            ((step++))
+
+            local s2="" s4="" s6=""
+            if [ "$gap_len" -gt 3 ]; then
+                s2=$(printf "%*s%s%*s" "$((gap_len / 2))" "" "${W}*${R}" "$((gap_len - (gap_len / 2) - 1))" "")
+            else
+                s2=$(printf "%*s" "$gap_len" "")
+            fi
+            if [ "$gap_len" -gt 5 ]; then
+                s4=$(printf "%*s%s  " "$((gap_len - 3))" "" "${W}·${R}")
+            else
+                s4=$(printf "%*s" "$gap_len" "")
+            fi
+            if [ "$gap_len" -gt 4 ]; then
+                s6=$(printf " %s%*s" "${W}⠂${R}" "$((gap_len - 2))" "")
+            else
+                s6=$(printf "%*s" "$gap_len" "")
+            fi
+
+            local s_gap=""
+            if [ "$gap_len" -gt 0 ]; then s_gap=$(printf "%*s" "$gap_len" ""); fi
+
+            printf "\033[10A"
+            if [ "$frame" -eq 0 ]; then
+                printf "%s%s%s%s\033[K\n" "$df_pad" "$d1_0" "$s_gap" "$dl_0"
+                printf "%s%s%s%s\033[K\n" "$df_pad" "$d1_1" "$s_gap" "$dl_1"
+                printf "%s%s%s%s\033[K\n" "$df_pad" "$d1_2" "$s2"    "$dl_2"
+                printf "%s%s%s%s\033[K\n" "$df_pad" "$d1_3" "$s_gap" "$dl_3"
+                printf "%s%s%s%s\033[K\n" "$df_pad" "$d1_4" "$s4"    "$dl_4"
+                printf "%s%s%s%s\033[K\n" "$df_pad" "$d1_5" "$s_gap" "$dl_5"
+                printf "%s%s%s%s\033[K\n" "$df_pad" "$d1_6" "$s6"    "$dl_6"
+                printf "%s%s%s%s\033[K\n" "$df_pad" "$d1_7" "$s_gap" "$dl_7"
+                printf "%s%s%s%s\033[K\n" "$df_pad" "$d1_8" "$s_gap" "$dl_8"
+                printf "%s%s%s%s\033[K\n" "$df_pad" "$d1_9" "$s_gap" "$dl_9"
+            else
+                printf "%s%s%s%s\033[K\n" "$df_pad" "$d2_0" "$s_gap" "$dl_0"
+                printf "%s%s%s%s\033[K\n" "$df_pad" "$d2_1" "$s_gap" "$dl_1"
+                printf "%s%s%s%s\033[K\n" "$df_pad" "$d2_2" "$s2"    "$dl_2"
+                printf "%s%s%s%s\033[K\n" "$df_pad" "$d2_3" "$s_gap" "$dl_3"
+                printf "%s%s%s%s\033[K\n" "$df_pad" "$d2_4" "$s4"    "$dl_4"
+                printf "%s%s%s%s\033[K\n" "$df_pad" "$d2_5" "$s_gap" "$dl_5"
+                printf "%s%s%s%s\033[K\n" "$df_pad" "$d2_6" "$s6"    "$dl_6"
+                printf "%s%s%s%s\033[K\n" "$df_pad" "$d2_7" "$s_gap" "$dl_7"
+                printf "%s%s%s%s\033[K\n" "$df_pad" "$d2_8" "$s_gap" "$dl_8"
+                printf "%s%s%s%s\033[K\n" "$df_pad" "$d2_9" "$s_gap" "$dl_9"
+            fi
+            sleep 0.05
+        done
+        printf "\033[?25h\n"
+    }
+    show_dragonfly_animation
+    exit 0
+fi
 
 if [ "$OS" = "Linux" ]; then
     if [ "$(id -u)" -ne 0 ]; then
