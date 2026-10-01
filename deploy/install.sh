@@ -547,6 +547,13 @@ elif [ "$OS" = "Darwin" ]; then
     echo "== Installing macOS LaunchAgents =="
     mkdir -p "$USER_HOME/Library/LaunchAgents"
 
+    # Reclaim ownership if previous runs with sudo left root-owned plists
+    for p in "$USER_HOME/Library/LaunchAgents/com.dragonfly.capture.plist" "$USER_HOME/Library/LaunchAgents/com.dragonfly.portal.plist"; do
+        if [ -f "$p" ] && [ ! -w "$p" ]; then
+            sudo rm -f "$p" 2>/dev/null || rm -f "$p" 2>/dev/null || true
+        fi
+    done
+
     BREW_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
     if command -v brew >/dev/null 2>&1; then
         BREW_BIN="$(dirname "$(command -v brew)")"
