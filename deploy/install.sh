@@ -23,11 +23,6 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-# Reopen stdin to /dev/tty if stdin is piped (e.g. curl ... | sudo bash)
-if [ ! -t 0 ] && [ -e /dev/tty ] && [ -r /dev/tty ]; then
-    exec 0< /dev/tty
-fi
-
 echo "========================================="
 echo "   Dragonfly Hub Service Installer       "
 echo "========================================="

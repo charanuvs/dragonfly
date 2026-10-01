@@ -18,11 +18,6 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-# Reopen stdin to /dev/tty if stdin is piped (e.g. curl ... | sudo bash)
-if [ ! -t 0 ] && [ -e /dev/tty ] && [ -r /dev/tty ]; then
-    exec 0< /dev/tty
-fi
-
 echo ""
 echo "========================================="
 echo "  Dragonfly Storage Setup                "
@@ -55,7 +50,11 @@ if grep -qs "[[:space:]]${MOUNT_POINT}[[:space:]]" /etc/fstab; then
         echo "If the drive is currently unplugged, Dragonfly's mount watchdog will mount it"
         echo "automatically as soon as it is plugged in."
         echo ""
-        read -r -p "Do you want to reconfigure / select a different drive? [y/N]: " reconf
+        if [ -c /dev/tty ] && [ -r /dev/tty ]; then
+            read -r -p "Do you want to reconfigure / select a different drive? [y/N]: " reconf </dev/tty || reconf="n"
+        else
+            reconf="n"
+        fi
         case "$reconf" in
             [yY]|[yY][eE][sS]) ;;
             *) exit 0 ;;
@@ -63,8 +62,8 @@ if grep -qs "[[:space:]]${MOUNT_POINT}[[:space:]]" /etc/fstab; then
     fi
 fi
 
-if [ ! -t 0 ]; then
-    echo "Non-interactive shell detected. Skipping USB drive configuration."
+if [ ! -t 0 ] && [ ! -c /dev/tty ]; then
+    echo "Non-interactive terminal detected. Skipping USB drive configuration."
     echo "You can configure storage interactively anytime by running:"
     echo "    sudo dragonfly-setup-storage"
     exit 0
@@ -130,7 +129,11 @@ done
 printf "  %d) Skip drive setup for now\n" "$idx"
 
 echo ""
-read -r -p "Select drive partition for Dragonfly recordings [1-$idx] (default: $idx): " choice
+if [ -c /dev/tty ] && [ -r /dev/tty ]; then
+    read -r -p "Select drive partition for Dragonfly recordings [1-$idx] (default: $idx): " choice </dev/tty || choice="$idx"
+else
+    choice="$idx"
+fi
 choice="${choice:-$idx}"
 
 if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -ge "$idx" ]; then
@@ -149,7 +152,11 @@ if [ "$current_fs" != "ext4" ]; then
     echo ""
     echo "Notice: $selected_dev currently has filesystem '${current_fs:-none}'."
     echo "ext4 is strongly recommended for continuous camera recordings on Linux."
-    read -r -p "Format $selected_dev as ext4 with label 'dragonfly-data'? (WARNING: ERASES ALL DATA ON $selected_dev) [y/N]: " format_ans
+    if [ -c /dev/tty ] && [ -r /dev/tty ]; then
+        read -r -p "Format $selected_dev as ext4 with label 'dragonfly-data'? (WARNING: ERASES ALL DATA ON $selected_dev) [y/N]: " format_ans </dev/tty || format_ans="n"
+    else
+        format_ans="n"
+    fi
     case "$format_ans" in
         [yY]|[yY][eE][sS])
             needs_format=1

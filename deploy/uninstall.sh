@@ -16,17 +16,16 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-# Reopen stdin to /dev/tty if stdin is piped
-if [ ! -t 0 ] && [ -e /dev/tty ] && [ -r /dev/tty ]; then
-    exec 0< /dev/tty
-fi
-
 echo "========================================="
 echo "   Dragonfly Service Uninstaller        "
 echo "========================================="
 echo ""
 echo "This will stop and remove Dragonfly services from this system."
-read -r -p "Are you sure you want to proceed? [y/N]: " confirm
+if [ -c /dev/tty ] && [ -r /dev/tty ]; then
+    read -r -p "Are you sure you want to proceed? [y/N]: " confirm </dev/tty || confirm="n"
+else
+    read -r -p "Are you sure you want to proceed? [y/N]: " confirm
+fi
 case "$confirm" in
     [yY]|[yY][eE][sS]) ;;
     *) echo "Uninstall canceled."; exit 0 ;;
