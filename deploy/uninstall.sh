@@ -10,7 +10,69 @@ CONFIG_DIR="${DRAGONFLY_CONFIG_DIR:-/etc/dragonfly}"
 SERVICE_USER="${DRAGONFLY_USER:-dragonfly}"
 SERVICE_GROUP="${DRAGONFLY_GROUP:-dragonfly}"
 MOUNT_POINT="${DRAGONFLY_MOUNT_POINT:-/mnt/dragonfly-hdd}"
+OS="$(uname -s)"
 
+if [ "$OS" = "Darwin" ]; then
+    REAL_USER="${SUDO_USER:-$(id -un)}"
+    USER_HOME="$(eval echo "~$REAL_USER")"
+    if [ ! -d "$INSTALL_DIR" ] && [ -d "$USER_HOME/.local/share/dragonfly" ]; then
+        INSTALL_DIR="$USER_HOME/.local/share/dragonfly"
+    fi
+    CONFIG_DIR="${DRAGONFLY_CONFIG_DIR:-$USER_HOME/.config/dragonfly}"
+
+    echo "========================================="
+    echo "   Dragonfly Service Uninstaller (macOS) "
+    echo "========================================="
+    echo ""
+    echo "This will stop and remove Dragonfly services from this Mac."
+    if [ -c /dev/tty ] && [ -r /dev/tty ]; then
+        read -r -p "Are you sure you want to proceed? [y/N]: " confirm </dev/tty || confirm="n"
+    else
+        read -r -p "Are you sure you want to proceed? [y/N]: " confirm
+    fi
+    case "$confirm" in
+        [yY]|[yY][eE][sS]) ;;
+        *) echo "Uninstall canceled."; exit 0 ;;
+    esac
+
+    echo "== Stopping and unloading LaunchAgents =="
+    launchctl unload "$USER_HOME/Library/LaunchAgents/com.dragonfly.capture.plist" 2>/dev/null || true
+    launchctl unload "$USER_HOME/Library/LaunchAgents/com.dragonfly.portal.plist" 2>/dev/null || true
+    rm -f "$USER_HOME/Library/LaunchAgents/com.dragonfly.capture.plist"
+    rm -f "$USER_HOME/Library/LaunchAgents/com.dragonfly.portal.plist"
+
+    echo "== Removing CLI helpers =="
+    rm -f /usr/local/bin/dragonfly-restart /usr/local/bin/dragonfly-update /usr/local/bin/dragonfly-uninstall /usr/local/bin/dragonfly-setup-storage 2>/dev/null || \
+    sudo rm -f /usr/local/bin/dragonfly-restart /usr/local/bin/dragonfly-update /usr/local/bin/dragonfly-uninstall /usr/local/bin/dragonfly-setup-storage 2>/dev/null || true
+
+    echo "== Removing application files ($INSTALL_DIR) =="
+    rm -rf "$INSTALL_DIR" 2>/dev/null || sudo rm -rf "$INSTALL_DIR"
+
+    # Optional config removal
+    echo ""
+    if [ -c /dev/tty ] && [ -r /dev/tty ]; then
+        read -r -p "Do you also want to delete configuration in $CONFIG_DIR? [y/N]: " del_cfg </dev/tty || del_cfg="n"
+    else
+        read -r -p "Do you also want to delete configuration in $CONFIG_DIR? [y/N]: " del_cfg
+    fi
+    case "$del_cfg" in
+        [yY]|[yY][eE][sS])
+            rm -rf "$CONFIG_DIR"
+            echo "Removed $CONFIG_DIR."
+            ;;
+        *)
+            echo "Preserved $CONFIG_DIR."
+            ;;
+    esac
+
+    echo ""
+    echo "========================================="
+    echo "   Dragonfly uninstalled successfully.   "
+    echo "========================================="
+    exit 0
+fi
+
+# Linux uninstaller below
 if [ "$(id -u)" -ne 0 ]; then
     echo "Error: dragonfly-uninstall must be run as root (use sudo)." >&2
     exit 1

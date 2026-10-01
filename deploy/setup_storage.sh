@@ -12,9 +12,105 @@ set -euo pipefail
 MOUNT_POINT="${DRAGONFLY_MOUNT_POINT:-/mnt/dragonfly-hdd}"
 SERVICE_USER="${DRAGONFLY_USER:-dragonfly}"
 SERVICE_GROUP="${DRAGONFLY_GROUP:-dragonfly}"
+OS="$(uname -s)"
 
+if [ "$OS" = "Darwin" ]; then
+    echo ""
+    echo "========================================="
+    echo "  Dragonfly Storage Setup (macOS)        "
+    echo "========================================="
+
+    CONFIG_FILE="${DRAGONFLY_CONFIG:-}"
+    if [ -z "$CONFIG_FILE" ]; then
+        if [ -f "$HOME/.config/dragonfly/dragonfly.yaml" ]; then
+            CONFIG_FILE="$HOME/.config/dragonfly/dragonfly.yaml"
+        elif [ -f "/etc/dragonfly/dragonfly.yaml" ]; then
+            CONFIG_FILE="/etc/dragonfly/dragonfly.yaml"
+        fi
+    fi
+
+    # Scan /Volumes for external drives
+    volumes=()
+    for v in /Volumes/*; do
+        [ -e "$v" ] || continue
+        vname="$(basename "$v")"
+        [ "$vname" = "Macintosh HD" ] && continue
+        volumes+=("$v")
+    done
+
+    echo ""
+    if [ ${#volumes[@]} -gt 0 ]; then
+        echo "Detected mounted external drive(s):"
+        idx=1
+        for vol in "${volumes[@]}"; do
+            size=$(df -h "$vol" | tail -n 1 | awk '{print $2}')
+            free=$(df -h "$vol" | tail -n 1 | awk '{print $4}')
+            printf "  %d) %-25s Size: %-7s Free: %s\n" "$idx" "$vol" "$size" "$free"
+            ((idx++))
+        done
+        printf "  %d) Use internal disk storage (%s/recordings)\n" "$idx" "${INSTALL_DIR:-$HOME/.local/share/dragonfly}"
+        printf "  %d) Skip drive setup for now\n" "$((idx + 1))"
+
+        skip_opt=$((idx + 1))
+        echo ""
+        if [ -c /dev/tty ] && [ -r /dev/tty ]; then
+            read -r -p "Select storage location [1-$skip_opt] (default: 1): " choice </dev/tty || choice="1"
+        else
+            choice="1"
+        fi
+        choice="${choice:-1}"
+
+        if [ "$choice" -eq "$skip_opt" ]; then
+            echo "Skipping storage setup."
+            exit 0
+        elif [ "$choice" -eq "$idx" ]; then
+            BASE_PATH="${INSTALL_DIR:-$HOME/.local/share/dragonfly}/recordings"
+            MNT_POINT=""
+        elif [ "$choice" -ge 1 ] && [ "$choice" -lt "$idx" ]; then
+            SELECTED_VOL="${volumes[$((choice - 1))]}"
+            BASE_PATH="$SELECTED_VOL/dragonfly/recordings"
+            MNT_POINT="$SELECTED_VOL"
+        else
+            echo "Invalid selection. Skipping."
+            exit 0
+        fi
+    else
+        echo "No external drives detected under /Volumes."
+        echo "Using storage at ${INSTALL_DIR:-$HOME/.local/share/dragonfly}/recordings."
+        BASE_PATH="${INSTALL_DIR:-$HOME/.local/share/dragonfly}/recordings"
+        MNT_POINT=""
+    fi
+
+    mkdir -p "$BASE_PATH"
+    echo "Storage directory created: $BASE_PATH"
+
+    if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
+        echo "Updating storage path in $CONFIG_FILE..."
+        python3 -c "
+import yaml
+path = '$CONFIG_FILE'
+try:
+    with open(path) as f:
+        data = yaml.safe_load(f) or {}
+    if 'storage' not in data:
+        data['storage'] = {}
+    data['storage']['recordings_path'] = '$BASE_PATH'
+    data['storage']['database_path'] = '$BASE_PATH/../dragonfly.db'
+    data['storage']['mount_point'] = '$MNT_POINT' if '$MNT_POINT' else None
+    with open(path, 'w') as f:
+        yaml.safe_dump(data, f, sort_keys=False)
+except Exception as e:
+    print('Notice: Could not auto-update config yaml:', e)
+" 2>/dev/null || true
+    fi
+
+    echo "Storage setup complete for macOS."
+    exit 0
+fi
+
+# Linux setup below
 if [ "$(id -u)" -ne 0 ]; then
-    echo "Error: This script must be run as root (use sudo)." >&2
+    echo "Error: This script must be run as root (use sudo) on Linux." >&2
     exit 1
 fi
 

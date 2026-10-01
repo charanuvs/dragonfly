@@ -107,6 +107,8 @@ def load_config(path: str | Path | None = None) -> HubConfig:
         target_path = Path(os.environ["DRAGONFLY_CONFIG"])
     elif Path("/etc/dragonfly/dragonfly.yaml").exists():
         target_path = Path("/etc/dragonfly/dragonfly.yaml")
+    elif (Path.home() / ".config/dragonfly/dragonfly.yaml").exists():
+        target_path = Path.home() / ".config/dragonfly/dragonfly.yaml"
     elif Path("config/dragonfly.yaml").exists():
         target_path = Path("config/dragonfly.yaml")
     else:

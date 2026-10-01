@@ -1,6 +1,6 @@
 ---
 name: dragonfly-ops
-description: 'Manage Dragonfly on Linux host: installation, USB storage setup, creating and adding camera configs (RTSP URLs, recording settings), restarting services, updating, and uninstallation.'
+description: 'Manage Dragonfly on Linux and macOS hosts: installation, storage setup, creating and adding camera configs (RTSP URLs, recording settings), restarting services, updating, and uninstallation.'
 argument-hint: 'install | storage | camera | restart | update | uninstall'
 user-invocable: true
 disable-model-invocation: false
@@ -8,35 +8,28 @@ disable-model-invocation: false
 
 # Dragonfly Operations & Administration
 
-This skill guides administration of Dragonfly on a Linux hub host, including service installation, USB storage mounting, camera configuration, service restarts, software updates, and uninstallation.
+This skill guides administration of Dragonfly on a Linux or macOS hub host, including service installation, storage mounting, camera configuration, service restarts, software updates, and uninstallation.
 
 ---
 
 ## 1. Installation
 
-Dragonfly installs as an isolated systemd service without requiring a git checkout on the hub host.
+Dragonfly installs as an isolated background service (`systemd` on Linux, `launchd` on macOS) without requiring a git checkout.
 
 ### One-line Install from GitHub Releases
-Run on the hub host:
+Run on your host:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/charanuvs/dragonfly/main/deploy/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/charanuvs/dragonfly/main/deploy/install.sh | bash
 ```
+*(On Linux, run with `sudo bash`).*
 
 ### What the installer performs:
-1. Installs system packages: `mosquitto`, `mosquitto-clients`, `ffmpeg`, `python3-venv`, `util-linux`, `e2fsprogs`.
-2. Creates a dedicated service user and group (`dragonfly`).
-3. Installs Dragonfly in `/opt/dragonfly/` with a clean virtual environment and the `[camera]` dependency set.
-4. Generates initial configuration at `/etc/dragonfly/dragonfly.yaml` if not present (existing configuration is preserved).
-5. Installs system binaries to `/usr/local/sbin/`:
-   - `dragonfly-setup-storage`
-   - `dragonfly-update`
-   - `dragonfly-uninstall`
-   - `dragonfly-mount-repair`
-6. Runs the interactive USB storage setup prompt.
-7. Installs, enables, and starts systemd units:
-   - `dragonfly-capture.service`
-   - `dragonfly-portal.service`
-   - `dragonfly-mount-watchdog.timer`
+1. Installs system packages: `mosquitto` and `ffmpeg` via `apt` (Linux) or Homebrew (macOS).
+2. Sets up Python virtual environment and installs Dragonfly with camera drivers.
+3. Configures initial settings at `/etc/dragonfly/dragonfly.yaml` (Linux) or `~/.config/dragonfly/dragonfly.yaml` (macOS).
+4. Installs unified CLI commands (`dragonfly-restart`, `dragonfly-setup-storage`, `dragonfly-update`, `dragonfly-uninstall`).
+5. Runs the interactive storage setup prompt.
+6. Starts and enables the background services.
 
 ---
 
@@ -101,28 +94,36 @@ Cameras are configured in `/etc/dragonfly/dragonfly.yaml` under the `cameras:` l
 
 Configuration changes (adding, modifying, or removing cameras) require restarting the services to take effect.
 
-### Restarting Both Services:
+### Unified Command (Linux & macOS):
 ```bash
-sudo systemctl restart dragonfly-capture dragonfly-portal
+dragonfly-restart
+```
+Or selectively:
+```bash
+dragonfly-restart capture   # Camera capture & recorder only
+dragonfly-restart portal    # Web dashboard only
 ```
 
-### Selective Restarts:
-- **Camera capture & recorder only** (when adding/removing cameras or tuning recording parameters):
+### Native Service Commands:
+- **Linux (systemd)**:
   ```bash
-  sudo systemctl restart dragonfly-capture
+  sudo systemctl restart dragonfly-capture dragonfly-portal
   ```
-- **Web dashboard & watchdog only** (when editing camera display names or watchdog intervals):
+- **macOS (launchd)**:
   ```bash
-  sudo systemctl restart dragonfly-portal
+  launchctl kickstart -k gui/$UID/com.dragonfly.capture
+  launchctl kickstart -k gui/$UID/com.dragonfly.portal
   ```
 
 ### Verifying Service Status & Logs:
 ```bash
-# Check status:
+# On Linux:
 sudo systemctl status dragonfly-capture dragonfly-portal
-
-# Follow logs in real-time:
 journalctl -u dragonfly-capture -u dragonfly-portal -f -n 50
+
+# On macOS:
+launchctl list | grep dragonfly
+tail -f ~/.local/share/dragonfly/logs/*.log
 ```
 
 ---

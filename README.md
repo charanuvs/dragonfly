@@ -12,28 +12,30 @@ Dragonfly is a lightweight, local-first home security and camera hub. Keep every
 
 ## Quick Install
 
-Run this command on your Linux hub host (Ubuntu, Debian, Raspberry Pi OS, etc.):
+Run this command on your Linux host (Ubuntu, Debian, Raspberry Pi OS, etc.) or macOS (Apple Silicon / Intel):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/charanuvs/dragonfly/main/deploy/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/charanuvs/dragonfly/main/deploy/install.sh | bash
 ```
+*(On Linux, run with `sudo bash`).*
 
 The installer takes care of everything:
-- Installs prerequisites (`ffmpeg`, `mosquitto`, Python)
-- Interactively configures and mounts your external USB storage
-- Configures and starts systemd background services
+- Installs prerequisites (`ffmpeg`, `mosquitto`, Python) via `apt` (Linux) or Homebrew (macOS)
+- Interactively configures external USB storage or local disk storage
+- Configures and starts background services (`systemd` on Linux, `launchd` on macOS)
 
 Once installed:
-- **Web Dashboard**: `http://<hub-ip>:8000`
-- **Config**: `/etc/dragonfly/dragonfly.yaml`
-- **Update**: `sudo dragonfly-update`
-- **Uninstall**: `sudo dragonfly-uninstall`
+- **Web Dashboard**: `http://localhost:8000` (or `http://<hub-ip>:8000`)
+- **Config**: `/etc/dragonfly/dragonfly.yaml` (Linux) or `~/.config/dragonfly/dragonfly.yaml` (macOS)
+- **Restart**: `dragonfly-restart`
+- **Update**: `dragonfly-update`
+- **Uninstall**: `dragonfly-uninstall`
 
 ---
 
 ## Adding Cameras
 
-Edit `/etc/dragonfly/dragonfly.yaml` and add your camera's RTSP stream:
+Edit your configuration (`/etc/dragonfly/dragonfly.yaml` on Linux or `~/.config/dragonfly/dragonfly.yaml` on macOS) and add your camera's RTSP stream:
 
 ```yaml
 cameras:
@@ -48,7 +50,7 @@ cameras:
 
 Apply changes by restarting the services:
 ```bash
-sudo systemctl restart dragonfly-capture dragonfly-portal
+dragonfly-restart
 ```
 
 ---
@@ -61,9 +63,11 @@ To view your cameras away from home without opening any router ports, install [T
 
 ## Compatibility
 
-- **OS**: Debian 12+, Ubuntu 22.04+, Raspberry Pi OS, DietPi, or any Linux distro with `systemd`.
-- **Architectures**: `x86_64` (Intel/AMD mini-PCs, NUCs, home servers), `aarch64` / `arm64` (Raspberry Pi 4/5, SBCs).
-- **Storage**: External USB 3.0 HDD or SSD formatted as `ext4`.
+- **Operating Systems**:
+  - **Linux**: Debian 12+, Ubuntu 22.04+, Raspberry Pi OS, DietPi, or any distro with `systemd`.
+  - **macOS**: macOS 12+ Monterey, Ventura, Sonoma, Sequoia (with [Homebrew](https://brew.sh)).
+- **Architectures**: `x86_64` (Intel/AMD), `arm64` (Apple Silicon M1/M2/M3/M4, Raspberry Pi 4/5).
+- **Storage**: External USB 3.0 HDD/SSD (ext4 on Linux, APFS/ExFAT on macOS) or internal storage.
 
 ---
 

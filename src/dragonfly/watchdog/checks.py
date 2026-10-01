@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -123,11 +124,11 @@ def check_recording(
 
 
 def check_service(service_name: str) -> dict:
-    """Is a systemd unit currently active? (`systemctl is-active`)
+    """Is a background service currently active?
 
     External observation rather than the process's own heartbeat, so it stays
     correct even if the process is hard-killed, wedged, or never started.
-    Readable without root.
+    Checks systemctl on Linux; falls back to launchctl/pgrep on macOS.
     """
     try:
         proc = subprocess.run(
@@ -139,7 +140,43 @@ def check_service(service_name: str) -> dict:
         state = proc.stdout.strip() or proc.stderr.strip()
         return {"online": proc.returncode == 0, "service": service_name, "state": state}
     except FileNotFoundError:
-        return {"online": False, "service": service_name, "error": "systemctl_not_found"}
+        # systemctl is not available (e.g. macOS / Darwin or systems without systemd)
+        if sys.platform == "darwin":
+            labels = [service_name, f"com.{service_name}", service_name.replace("-", ".")]
+            for label in labels:
+                try:
+                    p = subprocess.run(
+                        ["launchctl", "list", label],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    if p.returncode == 0:
+                        is_running = '"PID"' in p.stdout
+                        return {
+                            "online": is_running,
+                            "service": label,
+                            "state": "running" if is_running else "loaded",
+                        }
+                except Exception:
+                    pass
+
+        # Generic fallback: check if process is running via pgrep
+        try:
+            p = subprocess.run(
+                ["pgrep", "-f", service_name],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            is_active = p.returncode == 0
+            return {
+                "online": is_active,
+                "service": service_name,
+                "state": "active" if is_active else "inactive",
+            }
+        except Exception:
+            return {"online": False, "service": service_name, "error": "service_manager_not_found"}
     except subprocess.SubprocessError as exc:
         return {"online": False, "service": service_name, "error": str(exc)}
 
