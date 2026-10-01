@@ -70,15 +70,22 @@ dragonfly/
   tests/
 ```
 
-## Installation
+## Installation (No Git Clone Required)
 
-Dragonfly provides an out-of-the-box installer that sets up system dependencies, an isolated application environment (`/opt/dragonfly`), dedicated service user, USB storage formatting and mounting, and systemd services.
+Dragonfly provides an out-of-the-box release installer. You do **not** need to git clone the repository on your hub host. The installer downloads the required artifacts, installs system dependencies, creates an isolated application environment (`/opt/dragonfly`), sets up a dedicated service user, interactively configures external USB storage, and enables the systemd services.
 
-Run on the Linux host:
+Run directly on your Linux host:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/charanuvs/dragonfly/main/deploy/install.sh | sudo bash
 ```
+
+### What happens during installation:
+1. **System packages**: Automatically installs `mosquitto`, `ffmpeg`, Python venv, and required filesystem tools via `apt`.
+2. **Application environment**: Sets up `/opt/dragonfly` with a clean virtualenv under a dedicated `dragonfly` system user.
+3. **Interactive USB Storage Setup**: Detects attached external USB drives, lets you choose a partition, optionally formats it to `ext4`, adds a persistent `nofail` entry to `/etc/fstab`, and mounts it at `/mnt/dragonfly-hdd`.
+4. **Configuration**: Creates `/etc/dragonfly/dragonfly.yaml` from the template (existing configuration is preserved across updates).
+5. **Systemd Services**: Enables and launches `dragonfly-capture` (recording & streams), `dragonfly-portal` (web dashboard), and the mount watchdog timer.
 
 After installation:
 - **Web Dashboard**: `http://<hub-ip>:8000` (or via your Tailscale IP/hostname)
@@ -91,18 +98,22 @@ After installation:
 
 To view the web portal and camera feeds away from home without forwarding any ports on your router, install [Tailscale](https://tailscale.com) on your hub host and personal devices. You can access the dashboard securely from anywhere on your mesh network via `http://<tailscale-ip-or-magicdns>:8000`.
 
-## Status
-
-**OW** (Outdoor West, an RTSP/ONVIF camera) is monitored via a TCP-connect
-heartbeat visible live on the dashboard (`http://<hub-lan-ip>:8000`), and
-records continuously in gapless 5-minute segments to the external drive
-(see [`docs/recording.md`](docs/recording.md) for the retention/storage
-tradeoffs — an 8GB drive only holds a few days at usable quality). Other
-sensor types are yet to come.
-
 ## Managing Cameras & Configuration Changes
 
-Camera streams, polling intervals, and recording rules are defined in `/etc/dragonfly/dragonfly.yaml` (or `config/dragonfly.yaml` during local development).
+Camera streams, polling intervals, and recording rules are defined in `/etc/dragonfly/dragonfly.yaml` (see `config/dragonfly.example.yaml` for a complete reference).
+
+Example camera block:
+```yaml
+cameras:
+  - id: front_door
+    name: "Front Door"
+    rtsp_url: "rtsp://<user>:<password>@<camera-ip>:554/stream1"
+    poll_interval_s: 15
+    record: true
+    fps: 10
+    bitrate_kbps: 200
+    segment_seconds: 300
+```
 
 Configuration is loaded once at service startup. When you add, edit, or remove cameras:
 1. Edit `/etc/dragonfly/dragonfly.yaml`.
@@ -116,6 +127,19 @@ Configuration is loaded once at service startup. When you add, edit, or remove c
    sudo systemctl restart dragonfly-portal    # if display names or watchdog polling changed
    ```
 Restarting takes 1–2 seconds. Live recording and watchdog checks resume immediately with the updated configuration.
+
+## Development Setup
+
+For local testing, running pytest, or developing new modules on a workstation:
+
+```bash
+git clone https://github.com/charanuvs/dragonfly.git
+cd dragonfly
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+pytest
+```
 
 
 ## License
