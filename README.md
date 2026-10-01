@@ -10,32 +10,9 @@ Dragonfly is a lightweight, local-first home security and camera hub. Keep every
 
 ---
 
-## Quick Install
+## Installation
 
-Run this command on your Linux host (Ubuntu, Debian, Raspberry Pi OS, etc.) or macOS (Apple Silicon / Intel):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/charanuvs/dragonfly/main/deploy/install.sh | bash
-```
-*(On Linux, run with `sudo bash`).*
-
-The installer takes care of everything:
-- Installs prerequisites (`ffmpeg`, `mosquitto`, Python) via `apt` (Linux) or Homebrew (macOS)
-- Interactively configures external USB storage or local disk storage
-- Configures and starts background services (`systemd` on Linux, `launchd` on macOS)
-
-Once installed:
-- **Web Dashboard**: `http://localhost:8000` (or `http://<hub-ip>:8000`)
-- **Config**: `/etc/dragonfly/dragonfly.yaml` (Linux) or `~/.config/dragonfly/dragonfly.yaml` (macOS)
-- **Restart**: `dragonfly-restart`
-- **Update**: `dragonfly-update`
-- **Uninstall**: `dragonfly-uninstall` (or `curl -fsSL https://raw.githubusercontent.com/charanuvs/dragonfly/main/deploy/uninstall.sh | bash`)
-
----
-
-## Releases & Tarball Install
-
-To install from an official release archive rather than curling the main installer script:
+Download and run the release installer:
 
 ```bash
 # 1. Download & unpack the latest release tarball
@@ -47,6 +24,18 @@ cd dragonfly
 bash deploy/install.sh         # macOS
 sudo bash deploy/install.sh    # Linux
 ```
+
+The installer takes care of everything:
+- Installs prerequisites (`ffmpeg`, `mosquitto`, Python) via `apt` (Linux) or Homebrew (macOS)
+- Interactively configures external USB storage or local disk storage
+- Configures and starts background services (`systemd` on Linux, `launchd` on macOS)
+
+Once installed:
+- **Web Dashboard**: `http://localhost:8000` (or `http://<hub-ip>:8000`)
+- **Config**: `/etc/dragonfly/dragonfly.yaml` (Linux) or `~/.config/dragonfly/dragonfly.yaml` (macOS)
+- **Restart**: `dragonfly-restart`
+- **Update**: `dragonfly-update`
+- **Uninstall**: `dragonfly-uninstall`
 
 ---
 
