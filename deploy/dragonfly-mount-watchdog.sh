@@ -34,12 +34,10 @@ if ! mountpoint -q "$MOUNT_POINT"; then
     exit 0
 fi
 
-# Mounted — but is it actually alive? `stat -f` reads the filesystem
-# statistics, which fails with EIO on a shutdown/dead mount while
-# succeeding normally on a healthy one. This is the cheapest reliable
-# liveness probe: no writes, no directory walks, nothing that could disturb
-# an in-progress recording.
-if stat -f "$MOUNT_POINT" >/dev/null 2>&1; then
+# Mounted — but can the filesystem actually read its root directory?
+# `stat -f` can succeed on an ext4 shutdown mount even when directory reads
+# fail with EIO. Listing the root is read-only and catches that stale mount.
+if ls -A "$MOUNT_POINT" >/dev/null 2>&1; then
     exit 0  # healthy, nothing to do
 fi
 
