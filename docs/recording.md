@@ -25,6 +25,11 @@ be configured on the camera itself.
 used is the segment's *scheduled* start time, not the exact moment recording
 began (see cutover below).
 
+Open **Browse recordings** on a camera card to navigate its folders and play
+completed MP4 segments in the browser. A segment still being recorded may not
+play until it finishes. Recordings share the portal's network access: anyone
+who can reach the portal can view them.
+
 ## Gapless cutover
 
 A new `ffmpeg` process is launched every `segment_seconds` (default 300s/5

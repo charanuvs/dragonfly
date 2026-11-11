@@ -31,6 +31,7 @@ import time
 from dragonfly.hub.config import HubConfig
 from dragonfly.hub.eventbus import EventBus
 from dragonfly.hub.registry import DeviceRegistry
+from dragonfly.watchdog.alerts import AlertManager
 from dragonfly.watchdog.checks import (
     check_camera,
     check_recording,
@@ -51,10 +52,12 @@ class Watchdog:
         config: HubConfig,
         registry: DeviceRegistry,
         bus: EventBus | None = None,
+        alerts: AlertManager | None = None,
     ) -> None:
         self.config = config
         self.registry = registry
         self.bus = bus
+        self.alerts = alerts
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._last_repair_at = 0.0
@@ -87,6 +90,8 @@ class Watchdog:
 
         capture = check_service(self.config.watchdog.capture_service)
         self._report(CAPTURE_MODULE_ID, "capture_process", capture, now)
+        if self.alerts is not None:
+            self.alerts.observe("capture", not capture.get("online"), "Dragonfly: capture process offline")
 
         storage = check_storage(
             self.config.storage.mount_point,
@@ -112,6 +117,10 @@ class Watchdog:
                         full_pct=self.config.watchdog.storage_full_pct,
                     )
         self._report(STORAGE_MODULE_ID, "storage", storage, now)
+        if self.alerts is not None:
+            self.alerts.observe(
+                "storage", not storage.get("online"), "Dragonfly: recordings storage unavailable or full"
+            )
 
         for cam in self.config.cameras:
             camera = check_camera(cam.rtsp_url, timeout_s=cam.timeout_s)
@@ -125,6 +134,8 @@ class Watchdog:
                     self.registry.touch_recording(
                         cam.id, active=False, segment=None, ts=now
                     )
+                    if self.alerts is not None:
+                        self.alerts.observe(f"recording:{cam.id}", False, "")
                 else:
                     recording = check_recording(
                         self.config.storage.recordings_path,
@@ -139,6 +150,11 @@ class Watchdog:
                         ts=now,
                     )
                     self._publish(cam.id, "recording_verified", recording)
+                    if self.alerts is not None:
+                        self.alerts.observe(
+                            f"recording:{cam.id}", not recording.get("active"),
+                            f"Dragonfly: {cam.name} is not recording to disk",
+                        )
 
             # Report the camera last, folding in what the recording check
             # found (which file, how big, how fresh) so the card can show the
@@ -149,6 +165,11 @@ class Watchdog:
                     {k: v for k, v in recording.items() if k not in ("active", "root")}
                 )
             self._report(cam.id, "camera", details, now)
+            if self.alerts is not None:
+                self.alerts.observe(
+                    f"camera:{cam.id}", not camera.get("online"),
+                    f"Dragonfly: {cam.name} camera offline",
+                )
 
     def _maybe_repair_storage(self, now: float) -> dict | None:
         cfg = self.config.watchdog

@@ -13,6 +13,7 @@ User=dragonfly
 Group=dragonfly
 WorkingDirectory=/opt/dragonfly
 Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/dragonfly/alerts.env
 ExecStart=/opt/dragonfly/venv/bin/dragonfly-portal
 Restart=on-failure
 RestartSec=5

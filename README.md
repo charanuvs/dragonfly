@@ -61,6 +61,12 @@ dragonfly-restart
 
 ---
 
+## Phone Alerts (Optional)
+
+See [alert setup](docs/alerts.md) to receive watchdog notifications through ntfy.
+
+---
+
 ## Remote Access (Optional)
 
 To view your cameras away from home without opening any router ports, install [Tailscale](https://tailscale.com) on your hub host. You can securely access the dashboard from your phone or laptop at `http://<tailscale-ip>:8000`.

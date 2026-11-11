@@ -22,7 +22,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
 
 from dragonfly.hub.sysinfo import get_system_stats
@@ -34,6 +34,7 @@ app = FastAPI(title="Dragonfly")
 app.state.registry = None
 app.state.camera_config = {}
 app.state.storage_path = "/"
+app.state.recordings_path = None
 app.state.event_bus = None
 app.state.live_dir = Path("/tmp/dragonfly-live")
 
@@ -121,9 +122,59 @@ def system_stats(request: Request) -> dict:
     return get_system_stats(request.app.state.storage_path)
 
 
+def _recording_path(request: Request, path: str) -> Path:
+  root = request.app.state.recordings_path
+  if root is None:
+    raise HTTPException(status_code=404, detail="Recordings unavailable")
+  try:
+    root = Path(root).resolve()
+    target = (root / path).resolve()
+    if not target.is_relative_to(root):
+      raise HTTPException(status_code=404, detail="Not found")
+    return target
+  except (OSError, RuntimeError, ValueError):
+    raise HTTPException(status_code=404, detail="Not found")
+
+
+@app.get("/api/recordings")
+def list_recordings(request: Request, path: str = "") -> dict:
+  directory = _recording_path(request, path)
+  if not directory.is_dir():
+    raise HTTPException(status_code=404, detail="Directory not found")
+  try:
+    entries = []
+    for entry in directory.iterdir():
+      try:
+        root = Path(request.app.state.recordings_path).resolve()
+        _recording_path(request, str(entry.relative_to(root)))
+        if entry.is_dir():
+          entries.append({"name": entry.name, "type": "directory"})
+        elif entry.is_file() and entry.suffix.lower() == ".mp4":
+          entries.append({"name": entry.name, "type": "video"})
+      except (HTTPException, OSError):
+        continue
+    entries.sort(key=lambda entry: (entry["type"] != "directory", entry["name"].casefold()))
+    return {"path": path, "entries": entries}
+  except OSError:
+    raise HTTPException(status_code=503, detail="Recordings unavailable")
+
+
+@app.get("/api/recordings/video")
+def recording_video(request: Request, path: str):
+  video = _recording_path(request, path)
+  if video.suffix.lower() != ".mp4" or not video.is_file():
+    raise HTTPException(status_code=404, detail="Video not found")
+  return FileResponse(video, media_type="video/mp4")
+
+
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
     return _INDEX_HTML
+
+
+@app.get("/recordings", response_class=HTMLResponse)
+def recordings_page() -> str:
+  return _RECORDINGS_HTML
 
 
 @app.get("/live/{camera_id}", response_class=HTMLResponse)
@@ -428,6 +479,8 @@ _INDEX_HTML = """<!doctype html>
           ${renderDetails(m.details, RECORDING_DETAIL_KEYS)}
           ${m.module_type.includes('camera') && m.module_id.charAt(0) !== '_'
             ? `<div class="meta"><a href="/live/${escapeHtml(m.module_id)}" style="color:#4da3ff">Live view &rarr;</a></div>` : ''}
+          ${m.module_type.includes('camera') && m.module_id.charAt(0) !== '_'
+            ? `<div class="meta"><a href="/recordings?path=${encodeURIComponent(m.module_id)}" style="color:#4da3ff">Browse recordings &rarr;</a></div>` : ''}
         </div>
       `);
 
@@ -446,6 +499,121 @@ _INDEX_HTML = """<!doctype html>
     }
     refresh();
     setInterval(refresh, 5000);
+  </script>
+</body>
+</html>"""
+
+_RECORDINGS_HTML = """<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#111">
+  <title>Dragonfly &mdash; Recordings</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      background: #111; color: #eee; font-family: -apple-system, sans-serif; margin: 0;
+      padding: 1.5rem max(1.5rem, env(safe-area-inset-right))
+               max(1.5rem, env(safe-area-inset-bottom)) max(1.5rem, env(safe-area-inset-left));
+    }
+    main { max-width: 1000px; margin: auto; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+    h1 { font-size: 1.5rem; margin: 0; }
+    a { color: #4da3ff; }
+    nav { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin: 1.5rem 0 1rem; overflow-wrap: anywhere; }
+    nav a { padding: .3rem 0; }
+    video { display: block; width: 100%; max-height: 65vh; background: #000; }
+    #player[hidden] { display: none; }
+    #player { margin-bottom: 1.5rem; }
+    #playing { overflow-wrap: anywhere; }
+    #status { color: #aaa; }
+    ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid #333; }
+    li { border-bottom: 1px solid #333; }
+    li a { display: block; padding: .85rem .25rem; overflow-wrap: anywhere; text-decoration: none; }
+    li a:hover, li a:focus-visible { background: #222; text-decoration: underline; }
+    .kind { color: #999; display: inline-block; width: 4.5rem; font-size: .8rem; }
+    @media (max-width: 600px) {
+      body { padding: 1rem max(1rem, env(safe-area-inset-right))
+                     max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)); }
+      h1 { font-size: 1.25rem; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header><h1>Recordings</h1><a href="/">&larr; Dashboard</a></header>
+    <nav id="breadcrumbs" aria-label="Recording folders"></nav>
+    <section id="player" hidden>
+      <p id="playing"></p>
+      <video id="video" controls autoplay playsinline></video>
+      <p id="video-error" role="status"></p>
+    </section>
+    <p id="status" role="status">Loading&hellip;</p>
+    <ul id="entries"></ul>
+  </main>
+  <script>
+    const path = new URLSearchParams(location.search).get('path') || '';
+    const folderUrl = value => '/recordings?' + new URLSearchParams({path: value});
+    const videoUrl = value => '/api/recordings/video?' + new URLSearchParams({path: value});
+    const joinPath = (parent, name) => parent ? parent + '/' + name : name;
+    const breadcrumbs = document.getElementById('breadcrumbs');
+    const rootLink = document.createElement('a');
+    rootLink.href = folderUrl('');
+    rootLink.textContent = 'Recordings';
+    breadcrumbs.append(rootLink);
+    let current = '';
+    for (const part of path.split('/').filter(Boolean)) {
+      current = joinPath(current, part);
+      breadcrumbs.append(document.createTextNode(' / '));
+      const link = document.createElement('a');
+      link.href = folderUrl(current);
+      link.textContent = part;
+      breadcrumbs.append(link);
+    }
+    const video = document.getElementById('video');
+    video.addEventListener('error', () => {
+      document.getElementById('video-error').textContent = 'Unable to play this recording. It may still be recording or no longer available.';
+    });
+    async function load() {
+      const status = document.getElementById('status');
+      try {
+        const response = await fetch('/api/recordings?' + new URLSearchParams({path}));
+        if (!response.ok) throw new Error('Unable to load this folder.');
+        const data = await response.json();
+        data.entries.sort((a, b) => {
+          if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
+          return a.name.localeCompare(b.name, undefined, {numeric: true}) * (a.type === 'directory' ? -1 : 1);
+        });
+        status.textContent = data.entries.length ? '' : 'No recordings in this folder.';
+        const list = document.getElementById('entries');
+        for (const entry of data.entries) {
+          const item = document.createElement('li');
+          const link = document.createElement('a');
+          const target = joinPath(path, entry.name);
+          link.href = entry.type === 'directory' ? folderUrl(target) : videoUrl(target);
+          const kind = document.createElement('span');
+          kind.className = 'kind';
+          kind.textContent = entry.type === 'directory' ? 'Folder' : 'Video';
+          link.append(kind, document.createTextNode(entry.name));
+          if (entry.type === 'video') link.addEventListener('click', event => {
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault();
+            document.getElementById('player').hidden = false;
+            document.getElementById('playing').textContent = entry.name;
+            document.getElementById('video-error').textContent = '';
+            video.src = link.href;
+            video.play().catch(() => {});
+          });
+          item.append(link);
+          list.append(item);
+        }
+      } catch (error) {
+        status.textContent = error.message || 'Unable to load recordings.';
+      }
+    }
+    load();
   </script>
 </body>
 </html>"""

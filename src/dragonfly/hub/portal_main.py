@@ -33,6 +33,7 @@ from dragonfly.dashboard.live import DEFAULT_LIVE_DIR
 from dragonfly.hub.config import load_config
 from dragonfly.hub.eventbus import EventBus
 from dragonfly.hub.registry import DeviceRegistry
+from dragonfly.watchdog.alerts import AlertManager, Ntfy
 from dragonfly.watchdog.monitor import Watchdog
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -95,11 +96,22 @@ def run() -> None:
     dashboard_app.state.registry = registry
     dashboard_app.state.camera_config = {cam.id: cam for cam in config.cameras}
     dashboard_app.state.storage_path = config.storage.recordings_path
+    dashboard_app.state.recordings_path = config.storage.recordings_path
     dashboard_app.state.event_bus = bus
     dashboard_app.state.live_dir = DEFAULT_LIVE_DIR
 
     # Health monitoring lives here, not in capture — see watchdog/monitor.py.
-    watchdog = Watchdog(config, registry, bus)
+    try:
+        sender = Ntfy.from_environment()
+    except ValueError:
+        log.error("ntfy alerts disabled: invalid configuration")
+        sender = None
+    alerts = AlertManager(sender) if sender is not None else None
+    if alerts is not None:
+        alerts.start()
+    else:
+        log.info("ntfy alerts are not configured")
+    watchdog = Watchdog(config, registry, bus, alerts)
     watchdog.start()
 
     log.info(
@@ -111,6 +123,9 @@ def run() -> None:
     try:
         uvicorn.run(dashboard_app, host=config.dashboard.bind_host, port=config.dashboard.port)
     finally:
+        watchdog.stop()
+        if alerts is not None:
+            alerts.stop()
         bus.loop_stop()
 
 
