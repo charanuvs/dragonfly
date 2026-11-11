@@ -220,74 +220,132 @@ _INDEX_HTML = """<!doctype html>
   <!-- viewport-fit=cover so the page extends under the notch/home indicator
        on modern phones rather than being letterboxed by browser chrome. -->
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#111">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#e7ebe8">
   <!-- Lets this be saved to a phone home screen and open chrome-less. -->
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>Dragonfly</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
+    :root {
+      --ink: #202c29; --muted: #64716c; --paper: #f7f8f4;
+      --line: #aab4ae; --green: #2a7764; --red: #c84b38; --yellow: #e7bd53;
+    }
     * { box-sizing: border-box; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-      background: #111; color: #eee; margin: 0;
-      padding: 1.5rem max(1.5rem, env(safe-area-inset-right))
-               max(1.5rem, env(safe-area-inset-bottom)) max(1.5rem, env(safe-area-inset-left));
+      font-family: 'Space Grotesk', sans-serif;
+      background: repeating-linear-gradient(0deg, #e7ebe8, #e7ebe8 3px, #e3e8e4 3px, #e3e8e4 4px);
+      color: var(--ink); margin: 0;
+      padding: max(1.5rem, env(safe-area-inset-top)) max(1.5rem, env(safe-area-inset-right))
+               max(2rem, env(safe-area-inset-bottom)) max(1.5rem, env(safe-area-inset-left));
       -webkit-text-size-adjust: 100%;
     }
-    h1 { font-weight: 600; font-size: 1.5rem; margin: 0 0 1rem; }
-    /* Auto-fitting columns: one per row on a phone, as many as fit on a
-       desktop, without hard-coding breakpoints per card count. */
+    .dashboard { max-width: 1440px; margin: 0 auto; }
+    .masthead {
+      display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem;
+      border-bottom: 3px solid var(--ink); padding-bottom: 1rem; margin-bottom: 1.5rem;
+    }
+    .brand { display: flex; align-items: center; gap: .85rem; min-width: 0; }
+    .brand-mark {
+      display: grid; place-items: center; width: 43px; height: 43px; flex: none;
+      background: #e0eee2; border: 2px solid var(--ink);
+    }
+    .brand-mark svg { display: block; width: 35px; height: 35px; }
+    .brand-copy { min-width: 0; }
+    h1 { font-weight: 700; font-size: 1.65rem; line-height: 1; margin: 0; text-transform: uppercase; }
+    .eyebrow, .masthead-note, .section-kicker {
+      font: 500 .65rem 'DM Mono', monospace; text-transform: uppercase;
+    }
+    .eyebrow { color: var(--muted); margin-top: .35rem; }
+    .masthead-note { color: var(--muted); text-align: right; }
+    .section-heading {
+      display: flex; align-items: baseline; justify-content: space-between; gap: 1rem;
+      margin: 0 0 .75rem;
+    }
+    .section-heading h2 { font-size: 1rem; margin: 0; text-transform: uppercase; }
+    .section-kicker { color: var(--muted); }
     .grid {
-      display: grid; gap: 1rem;
-      grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+      display: grid; gap: 1rem; align-items: stretch; grid-auto-rows: 1fr;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
     }
     .card {
-      border: 1px solid #333; border-radius: 10px; padding: 1rem 1.25rem;
-      background: #1a1a1a; min-width: 0;
+      border: 1px solid var(--ink); border-top: 5px solid var(--ink); border-radius: 2px;
+      padding: 1rem 1.15rem; background: var(--paper); min-width: 0;
+      box-shadow: 3px 3px 0 #bec8c1;
     }
-    .card .name { font-size: 1.1rem; font-weight: 600; margin-bottom: .5rem; }
-    .status { display: flex; align-items: center; gap: .5rem; font-size: .95rem; }
-    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
-    .dot.online { background: #2ecc71; box-shadow: 0 0 6px #2ecc71; }
-    .dot.offline { background: #e74c3c; box-shadow: 0 0 6px #e74c3c; }
+    .card .name { font-size: 1.1rem; font-weight: 700; margin-bottom: .85rem; overflow-wrap: anywhere; }
+    .status { display: flex; align-items: center; gap: .55rem; font-size: .9rem; font-weight: 600; margin-top: .55rem; }
+    .dot { width: 9px; height: 9px; border: 1px solid var(--ink); border-radius: 50%; display: inline-block; flex: none; }
+    .dot.online { background: #69b68f; }
+    .dot.offline { background: #ed6b50; }
     .meta {
-      color: #888; font-size: .8rem; margin-top: .4rem;
-      /* Long paths (segment filenames) must not stretch the card on a phone. */
+      color: var(--muted); font: 400 .72rem/1.5 'DM Mono', monospace; margin-top: .3rem;
       overflow-wrap: anywhere;
     }
-    .empty { color: #888; }
+    .empty { color: var(--muted); }
     .sysbar {
-      display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; align-items: center;
-      background: #1a1a1a; border: 1px solid #333; border-radius: 10px;
-      padding: .75rem 1.25rem; margin-bottom: 1.25rem; font-size: .85rem; color: #ccc;
+      display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+      border: 1px solid var(--ink); background: var(--paper); margin-bottom: 2rem;
+      font: 400 .72rem/1.5 'DM Mono', monospace;
     }
-    .sysbar b { color: #eee; }
+    .sysbar span { padding: .85rem 1rem; min-width: 0; overflow-wrap: anywhere; }
+    .sysbar span + span { border-left: 1px solid var(--line); }
+    .sysbar span:first-child { background: var(--ink); color: #f4f6ee; }
+    .sysbar b { font-weight: 500; }
     .history-card {
-      border: 1px solid #333; border-radius: 10px; padding: 1rem 1.25rem;
-      background: #1a1a1a; margin-bottom: 1.25rem;
+      border-top: 1px solid var(--ink); border-bottom: 1px solid var(--line);
+      padding: 1rem 0 1.25rem; margin-bottom: 2rem;
     }
-    .history-card .name { font-size: 1.1rem; font-weight: 600; margin-bottom: .5rem; }
-    /* Comfortable tap target, and enough contrast to find one-handed. */
-    .card a { display: inline-block; padding: .35rem 0; }
-    .meta.file { color: #aaa; }
+    .history-card .name { font-size: .95rem; font-weight: 700; margin-bottom: .75rem; text-transform: uppercase; }
+    .card a { display: inline-block; padding: .4rem 0; color: #176957; font-weight: 500; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+    .card a:hover { color: var(--red); }
+    .card a:focus-visible { outline: 2px solid var(--red); outline-offset: 3px; }
+    .meta.file { color: #3b4d45; }
     .filename {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: .78rem; color: #ddd;
+      font-family: 'DM Mono', monospace; font-size: .72rem; color: var(--ink);
     }
-
+    @media (max-width: 850px) {
+      .sysbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .sysbar span + span { border-left: 0; border-top: 1px solid var(--line); }
+      .sysbar span:nth-child(even) { border-left: 1px solid var(--line); }
+      .sysbar span:nth-child(2) { border-top: 0; }
+    }
     @media (max-width: 600px) {
-      body { padding: 1rem max(1rem, env(safe-area-inset-right))
-                     max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)); }
-      h1 { font-size: 1.25rem; }
-      .card, .history-card, .sysbar { padding: .85rem 1rem; }
-      /* Each stat on its own line reads better than a wrapped run-on row. */
-      .sysbar { flex-direction: column; align-items: flex-start; gap: .35rem; }
+      body { padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right))
+                     max(1.5rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)); }
+      h1 { font-size: 1.35rem; }
+      .masthead-note { display: none; }
+      .masthead { margin-bottom: 1rem; }
+      .sysbar { margin-bottom: 1.5rem; }
+      .sysbar span { padding: .7rem .75rem; }
+      .history-card { margin-bottom: 1.5rem; }
     }
   </style>
 </head>
 <body>
-  <h1>Dragonfly</h1>
+  <main class="dashboard">
+  <header class="masthead">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+          <g stroke="#202c29" stroke-width="1.5" stroke-linejoin="round">
+            <path d="M22 18C17 8 8 7 3 9c2 6 8 12 19 13Z" fill="#9d78c5"/>
+            <path d="M26 18C31 8 40 7 45 9c-2 6-8 12-19 13Z" fill="#9d78c5"/>
+            <path d="M22 23C13 20 7 22 4 28c6 3 13 2 19-2Z" fill="#c5a5dd"/>
+            <path d="M26 23c9-3 15-1 18 5-6 3-13 2-19-2Z" fill="#c5a5dd"/>
+            <path d="M22 26h4l-1 16-1 3-1-3Z" fill="#2a7764"/>
+            <ellipse cx="24" cy="21" rx="4" ry="6" fill="#4b9b70"/>
+            <circle cx="24" cy="13" r="3" fill="#2a7764"/>
+          </g>
+        </svg>
+      </div>
+      <div class="brand-copy"><h1>Dragonfly</h1><div class="eyebrow">Security &amp; monitoring</div></div>
+    </div>
+    <div class="masthead-note">System monitor<br>Local network</div>
+  </header>
   <div id="sysbar" class="sysbar">Loading system stats&hellip;</div>
   <div class="history-card">
     <div class="name">CPU / memory</div>
@@ -297,7 +355,9 @@ _INDEX_HTML = """<!doctype html>
       <canvas id="historyChart"></canvas>
     </div>
   </div>
+  <div class="section-heading"><h2>Devices</h2><span class="section-kicker">Live status</span></div>
   <div id="grid" class="grid"><p class="empty">Loading...</p></div>
+  </main>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js"></script>
   <script>
     // Purely client-side: polls /api/system every second and accumulates
@@ -315,8 +375,8 @@ _INDEX_HTML = """<!doctype html>
         data: {
           labels: liveData.labels,
           datasets: [
-            { label: 'CPU %', data: liveData.cpu, borderColor: '#4da3ff', backgroundColor: 'transparent', tension: .2, pointRadius: 0, borderWidth: 1.5 },
-            { label: 'Mem %', data: liveData.mem, borderColor: '#2ecc71', backgroundColor: 'transparent', tension: .2, pointRadius: 0, borderWidth: 1.5 },
+            { label: 'CPU %', data: liveData.cpu, borderColor: '#c84b38', backgroundColor: 'transparent', tension: .2, pointRadius: 0, borderWidth: 2 },
+            { label: 'Mem %', data: liveData.mem, borderColor: '#2a7764', backgroundColor: 'transparent', tension: .2, pointRadius: 0, borderWidth: 2 },
           ],
         },
         options: {
@@ -326,10 +386,10 @@ _INDEX_HTML = """<!doctype html>
           maintainAspectRatio: false,
           animation: false,
           scales: {
-            y: { min: 0, max: 100, ticks: { color: '#888', maxTicksLimit: 5 }, grid: { color: '#292929' } },
-            x: { ticks: { color: '#888', maxTicksLimit: 5, maxRotation: 0 }, grid: { display: false } },
+            y: { min: 0, max: 100, ticks: { color: '#64716c', maxTicksLimit: 5 }, grid: { color: '#c9d1cb' } },
+            x: { ticks: { color: '#64716c', maxTicksLimit: 5, maxRotation: 0 }, grid: { display: false } },
           },
-          plugins: { legend: { labels: { color: '#ccc', boxWidth: 12 } } },
+          plugins: { legend: { labels: { color: '#202c29', boxWidth: 12 } } },
         },
       });
     }
@@ -385,7 +445,7 @@ _INDEX_HTML = """<!doctype html>
       used_pct: 'disk used', free_bytes: 'free', total_bytes: 'capacity',
       newest_segment: 'newest file', newest_age_s: 'file age',
       newest_size_bytes: 'file size', state: 'systemd', service: 'unit',
-      host: 'host', port: 'port', mount_point: 'mount', error: 'error',
+      host: 'host', port: 'port', mount_point: 'mount', path: 'recordings', error: 'error',
       capture_report: 'capture says', full: 'full', mounted: 'mounted',
       healthy: 'readable', stale_after_s: 'stale after', root: 'path',
     };
@@ -441,6 +501,24 @@ _INDEX_HTML = """<!doctype html>
       return rows.join('');
     }
 
+    function detailKeysToSkip(module) {
+      const skip = [...RECORDING_DETAIL_KEYS];
+      const details = module.details || {};
+      if (module.module_type === 'storage' && module.online) {
+        skip.push('full', 'healthy', 'mounted', 'root', 'used_bytes', 'total_bytes');
+      }
+      if (module.module_type === 'capture_process' && module.online) {
+        skip.push('state', 'service');
+      }
+      if (module.module_type.includes('camera') && module.online) {
+        skip.push('host', 'port', 'stale_after_s');
+      }
+      if (details.capture_report === 'recording' && module.recording_active) {
+        skip.push('capture_report');
+      }
+      return skip;
+    }
+
     async function refresh() {
       const res = await fetch('/api/modules');
       const modules = await res.json();
@@ -471,16 +549,13 @@ _INDEX_HTML = """<!doctype html>
             ${m.details && m.details.newest_age_s !== undefined
               ? ` &middot; written ${formatAgo(m.details.newest_age_s)} ago` : ''}
           </div>` : ''}
-          <div class="meta">
-            ${m.recording_seconds_since_event !== null
-              ? `verified ${formatAgo(m.recording_seconds_since_event)} ago`
-              : 'no recording activity yet'}
-          </div>` : ''}
-          ${renderDetails(m.details, RECORDING_DETAIL_KEYS)}
+          ${m.recording_seconds_since_event === null
+            ? '<div class="meta">no recording activity yet</div>' : ''}` : ''}
+          ${renderDetails(m.details, detailKeysToSkip(m))}
           ${m.module_type.includes('camera') && m.module_id.charAt(0) !== '_'
-            ? `<div class="meta"><a href="/live/${escapeHtml(m.module_id)}" style="color:#4da3ff">Live view &rarr;</a></div>` : ''}
+            ? `<div class="meta"><a href="/live/${escapeHtml(m.module_id)}">Live view &rarr;</a></div>` : ''}
           ${m.module_type.includes('camera') && m.module_id.charAt(0) !== '_'
-            ? `<div class="meta"><a href="/recordings?path=${encodeURIComponent(m.module_id)}" style="color:#4da3ff">Browse recordings &rarr;</a></div>` : ''}
+            ? `<div class="meta"><a href="/recordings?path=${encodeURIComponent(m.module_id)}">Browse recordings &rarr;</a></div>` : ''}
         </div>
       `);
 
