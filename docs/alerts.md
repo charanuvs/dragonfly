@@ -2,7 +2,8 @@
 
 Dragonfly can send ntfy push notifications when a camera is unreachable,
 recording stops, the capture service is offline, or recording storage is
-unavailable or full. Notifications are disabled until configured.
+unavailable or full. It also alerts when CPU or memory usage stays at or above
+90% for one minute. Notifications are disabled until configured.
 
 ## Set up ntfy
 
@@ -57,6 +58,9 @@ errors. An accepted request is not a guarantee of push delivery.
 
 - An outage must persist for 30 seconds before an alert is sent. A continuing
   outage produces one notification; a new outage after recovery can produce another.
+- CPU and memory are sampled on each watchdog pass. Each must remain at or
+  above 90% for one minute of consecutive samples; a lower reading or a long
+  sampling gap resets its timer. These alerts do not have an extra 30-second delay.
 - Failed sends are retried every 60 seconds while the failure persists. A
   timeout can result in a duplicate if ntfy accepted the first request.
 - Recording checks allow the configured segment length plus watchdog grace

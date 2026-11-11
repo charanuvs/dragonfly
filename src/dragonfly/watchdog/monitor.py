@@ -28,6 +28,8 @@ import logging
 import threading
 import time
 
+import psutil
+
 from dragonfly.hub.config import HubConfig
 from dragonfly.hub.eventbus import EventBus
 from dragonfly.hub.registry import DeviceRegistry
@@ -61,6 +63,7 @@ class Watchdog:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._last_repair_at = 0.0
+        self._usage_samples: dict[str, tuple[float, float]] = {}
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._loop, daemon=True, name="watchdog")
@@ -87,6 +90,9 @@ class Watchdog:
     def run_once(self) -> None:
         """One full pass of every check. Separated from the loop for testing."""
         now = time.time()
+
+        if self.alerts is not None:
+            self._check_resource_alerts()
 
         capture = check_service(self.config.watchdog.capture_service)
         self._report(CAPTURE_MODULE_ID, "capture_process", capture, now)
@@ -169,6 +175,37 @@ class Watchdog:
                 self.alerts.observe(
                     f"camera:{cam.id}", not camera.get("online"),
                     f"Dragonfly: {cam.name} camera offline",
+                )
+
+    def _check_resource_alerts(self) -> None:
+        if self.alerts is None:
+            return
+        for key, label, sample in (
+            ("cpu", "CPU", lambda: psutil.cpu_percent(interval=None)),
+            ("memory", "Memory", lambda: psutil.virtual_memory().percent),
+        ):
+            try:
+                percent = sample()
+            except (OSError, RuntimeError, psutil.Error):
+                log.warning("Unable to sample %s usage", label)
+                self._usage_samples.pop(key, None)
+                self.alerts.observe(key, False, "")
+                continue
+            now = time.monotonic()
+            previous = self._usage_samples.get(key)
+            if percent < 90:
+                self._usage_samples.pop(key, None)
+                self.alerts.observe(key, False, "")
+                continue
+            if previous is None or now - previous[1] > self.config.watchdog.interval_s * 2:
+                self.alerts.observe(key, False, "")
+                since = now
+            else:
+                since = previous[0]
+            self._usage_samples[key] = (since, now)
+            if now - since >= 60:
+                self.alerts.observe(
+                    key, True, f"Dragonfly: {label} usage at or above 90% for 1 minute", delay_s=0
                 )
 
     def _maybe_repair_storage(self, now: float) -> dict | None:

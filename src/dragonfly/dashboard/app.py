@@ -300,6 +300,11 @@ _INDEX_HTML = """<!doctype html>
       padding: 1rem 0 1.25rem; margin-bottom: 2rem;
     }
     .history-card .name { font-size: .95rem; font-weight: 700; margin-bottom: .75rem; text-transform: uppercase; }
+    .telemetry-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.5rem; }
+    .telemetry-panel { min-width: 0; }
+    .telemetry-panel .name { margin-bottom: .2rem; }
+    .telemetry-unit { color: var(--muted); font: 400 .65rem 'DM Mono', monospace; margin-bottom: .5rem; }
+    .chart-wrap { position: relative; height: 180px; }
     .card a { display: inline-block; padding: .4rem 0; color: #176957; font-weight: 500; text-decoration-thickness: 1px; text-underline-offset: 3px; }
     .card a:hover { color: var(--red); }
     .card a:focus-visible { outline: 2px solid var(--red); outline-offset: 3px; }
@@ -308,6 +313,7 @@ _INDEX_HTML = """<!doctype html>
       font-family: 'DM Mono', monospace; font-size: .72rem; color: var(--ink);
     }
     @media (max-width: 850px) {
+      .telemetry-grid { grid-template-columns: 1fr; gap: 1.25rem; }
       .sysbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .sysbar span + span { border-left: 0; border-top: 1px solid var(--line); }
       .sysbar span:nth-child(even) { border-left: 1px solid var(--line); }
@@ -348,11 +354,19 @@ _INDEX_HTML = """<!doctype html>
   </header>
   <div id="sysbar" class="sysbar">Loading system stats&hellip;</div>
   <div class="history-card">
-    <div class="name">CPU / memory</div>
-    <!-- Wrapper gives Chart.js a definite height to fill; without it,
-         responsive mode collapses the canvas on some mobile browsers. -->
-    <div style="position:relative; height:clamp(120px, 22vh, 200px)">
-      <canvas id="historyChart"></canvas>
+    <div class="telemetry-grid">
+      <div class="telemetry-panel">
+        <div class="name">CPU / memory</div><div class="telemetry-unit">Percent</div>
+        <div class="chart-wrap"><canvas id="historyChart"></canvas></div>
+      </div>
+      <div class="telemetry-panel">
+        <div class="name">Disk activity</div><div class="telemetry-unit">KiB/s &middot; all devices</div>
+        <div class="chart-wrap"><canvas id="diskChart"></canvas></div>
+      </div>
+      <div class="telemetry-panel">
+        <div class="name">Network traffic</div><div class="telemetry-unit">KiB/s &middot; all interfaces</div>
+        <div class="chart-wrap"><canvas id="networkChart"></canvas></div>
+      </div>
     </div>
   </div>
   <div class="section-heading"><h2>Devices</h2><span class="section-kicker">Live status</span></div>
@@ -365,33 +379,44 @@ _INDEX_HTML = """<!doctype html>
     // reloads. Capped to the last 5 minutes so a tab left open for hours
     // doesn't grow without bound.
     const MAX_POINTS = 300;
-    const liveData = { labels: [], cpu: [], mem: [] };
-    let historyChart = null;
+    const liveData = { labels: [], cpu: [], mem: [], diskRead: [], diskWrite: [], netRecv: [], netSent: [] };
+    let charts = null;
+    let previousIo = null;
 
-    function initChart() {
-      const ctx = document.getElementById('historyChart').getContext('2d');
-      historyChart = new Chart(ctx, {
+    function createChart(id, series, max = undefined) {
+      return new Chart(document.getElementById(id).getContext('2d'), {
         type: 'line',
         data: {
           labels: liveData.labels,
-          datasets: [
-            { label: 'CPU %', data: liveData.cpu, borderColor: '#c84b38', backgroundColor: 'transparent', tension: .2, pointRadius: 0, borderWidth: 2 },
-            { label: 'Mem %', data: liveData.mem, borderColor: '#2a7764', backgroundColor: 'transparent', tension: .2, pointRadius: 0, borderWidth: 2 },
-          ],
+          datasets: series.map(([label, data, color]) => ({
+            label, data, borderColor: color, backgroundColor: 'transparent',
+            tension: .2, pointRadius: 0, borderWidth: 2,
+          })),
         },
         options: {
           responsive: true,
-          // Fill the sized wrapper rather than holding a fixed aspect ratio,
-          // which on a narrow screen would make the chart absurdly short.
           maintainAspectRatio: false,
           animation: false,
           scales: {
-            y: { min: 0, max: 100, ticks: { color: '#64716c', maxTicksLimit: 5 }, grid: { color: '#c9d1cb' } },
+            y: { min: 0, max, ticks: { color: '#64716c', maxTicksLimit: 5 }, grid: { color: '#c9d1cb' } },
             x: { ticks: { color: '#64716c', maxTicksLimit: 5, maxRotation: 0 }, grid: { display: false } },
           },
           plugins: { legend: { labels: { color: '#202c29', boxWidth: 12 } } },
         },
       });
+    }
+
+    function initCharts() {
+      charts = [
+        createChart('historyChart', [['CPU %', liveData.cpu, '#c84b38'], ['Mem %', liveData.mem, '#2a7764']], 100),
+        createChart('diskChart', [['Read', liveData.diskRead, '#9a5d21'], ['Write', liveData.diskWrite, '#4d716d']]),
+        createChart('networkChart', [['Receive', liveData.netRecv, '#365d9c'], ['Send', liveData.netSent, '#a24f69']]),
+      ];
+    }
+
+    function ioRate(current, previous, elapsed) {
+      if (current == null || previous == null || elapsed <= 0 || current < previous) return null;
+      return (current - previous) / elapsed / 1024;
     }
 
     function formatUptime(s) {
@@ -419,14 +444,20 @@ _INDEX_HTML = """<!doctype html>
       const s = await res.json();
       renderSysbar(s);
 
+      const elapsed = previousIo ? s.io_timestamp - previousIo.io_timestamp : 0;
       liveData.labels.push(new Date().toLocaleTimeString([], {hour12: false}));
       liveData.cpu.push(s.cpu_percent);
       liveData.mem.push(s.mem_percent);
+      liveData.diskRead.push(ioRate(s.disk_read_bytes, previousIo?.disk_read_bytes, elapsed));
+      liveData.diskWrite.push(ioRate(s.disk_write_bytes, previousIo?.disk_write_bytes, elapsed));
+      liveData.netRecv.push(ioRate(s.network_received_bytes, previousIo?.network_received_bytes, elapsed));
+      liveData.netSent.push(ioRate(s.network_sent_bytes, previousIo?.network_sent_bytes, elapsed));
+      if (!previousIo || elapsed > 0) previousIo = s;
       if (liveData.labels.length > MAX_POINTS) {
-        liveData.labels.shift(); liveData.cpu.shift(); liveData.mem.shift();
+        Object.values(liveData).forEach(values => values.shift());
       }
-      if (!historyChart) initChart();
-      historyChart.update('none');
+      if (!charts) initCharts();
+      charts.forEach(chart => chart.update('none'));
     }
     tickSystem();
     setInterval(tickSystem, 1000);

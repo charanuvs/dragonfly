@@ -28,7 +28,22 @@ def get_system_stats(disk_path: str) -> dict:
         "mem_used": mem.total - mem.available,
         "mem_percent": mem.percent,
         "uptime_s": time.time() - psutil.boot_time(),
+        "io_timestamp": time.monotonic(),
     }
+    try:
+        disk_io = psutil.disk_io_counters()
+    except (OSError, RuntimeError, NotImplementedError, psutil.Error):
+        disk_io = None
+    try:
+        network_io = psutil.net_io_counters()
+    except (OSError, RuntimeError, NotImplementedError, psutil.Error):
+        network_io = None
+    stats.update({
+        "disk_read_bytes": disk_io.read_bytes if disk_io else None,
+        "disk_write_bytes": disk_io.write_bytes if disk_io else None,
+        "network_received_bytes": network_io.bytes_recv if network_io else None,
+        "network_sent_bytes": network_io.bytes_sent if network_io else None,
+    })
     try:
         disk = shutil.disk_usage(disk_path)
         stats.update(

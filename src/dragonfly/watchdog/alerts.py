@@ -65,7 +65,7 @@ class AlertManager:
         if self._thread:
             self._thread.join(timeout=12)
 
-    def observe(self, key: str, failed: bool, message: str) -> None:
+    def observe(self, key: str, failed: bool, message: str, delay_s: float | None = None) -> None:
         with self._lock:
             if not failed:
                 self._states.pop(key, None)
@@ -73,6 +73,7 @@ class AlertManager:
                 self._states[key] = {
                     "message": message,
                     "since": time.monotonic(),
+                    "delay_s": self.delay_s if delay_s is None else delay_s,
                     "next_attempt": 0.0,
                     "sent": False,
                 }
@@ -86,7 +87,7 @@ class AlertManager:
         with self._lock:
             pending = [
                 (key, state) for key, state in self._states.items()
-                if not state["sent"] and now >= state["since"] + self.delay_s
+                if not state["sent"] and now >= state["since"] + state["delay_s"]
                 and now >= state["next_attempt"]
             ]
         for key, state in pending:
