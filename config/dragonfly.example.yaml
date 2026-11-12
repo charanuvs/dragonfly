@@ -53,6 +53,7 @@ cameras: []
 #   - id: front_door
 #     name: "Front Door"
 #     rtsp_url: "rtsp://admin:password@192.168.1.50:554/stream1"
+#     ir_control: true  # Reolink camera IR modes (Auto/Off) in the dashboard
 #     recording_rtsp_url: "rtsp://admin:password@192.168.1.50:554/stream2"
 #     poll_interval_s: 15
 #     timeout_s: 3

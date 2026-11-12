@@ -241,13 +241,14 @@ class SegmentedRecorder(SensorModule):
             "ffmpeg", "-nostdin", "-y", "-loglevel", "warning",
             "-rtsp_transport", "tcp", "-timeout", "15000000",
             "-i", self.rtsp_url,
+            "-map", "0:v:0", "-map", "0:a?",
             "-t", str(max(1, round(duration))),
             "-vf", f"fps={self.fps}",
             "-c:v", "libx264", "-preset", "veryfast",
             "-b:v", f"{self.bitrate_kbps}k",
             "-maxrate", f"{self.bitrate_kbps}k",
             "-bufsize", f"{self.bitrate_kbps * 2}k",
-            "-an",
+            "-c:a", "aac", "-b:a", "64k",
             # Regular (non-fragmented) MP4: finalizes duration/seek metadata
             # properly once the segment completes, for reliable playback in
             # QuickTime/VLC/everything. (Fragmented MP4 was tried briefly to
@@ -268,7 +269,7 @@ class SegmentedRecorder(SensorModule):
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             log.info("recording segment -> %s", path)
-            log_f = open(path.with_suffix(".log"), "w")
+            log_f = open(path.with_suffix(".log"), "w")  # noqa: SIM115
             proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=log_f)
         except OSError:
             log.warning(

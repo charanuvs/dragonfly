@@ -91,7 +91,13 @@ def test_launch_segment_proceeds_when_mount_point_is_mounted(tmp_path):
 
     assert (tmp_path / "OW").exists()  # directory structure was created
     assert len(recorder._processes) == 1
-    _module_id, subtopic, payload = fake_bus.publish.call_args[0]
+    command = mock_popen.call_args.args[0]
+    assert command[command.index("-map") + 1] == "0:v:0"
+    audio_map = command.index("-map", command.index("-map") + 1)
+    assert command[audio_map + 1] == "0:a?"
+    assert command[command.index("-c:a") + 1] == "aac"
+    assert command[command.index("-b:a") + 1] == "64k"
+    _module_id, _subtopic, payload = fake_bus.publish.call_args[0]
     data = json.loads(payload)
     assert data["active"] is True
 

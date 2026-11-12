@@ -8,7 +8,8 @@ two both on the host and on the camera's limited concurrent-connection budget,
 so it isn't worth keeping alive when nobody's watching.
 
 Uses `-c:v copy` (remux, not re-encode) into short HLS segments — cheap on
-CPU since it's not touching the video data, just repackaging it.
+CPU since it's not touching the video data, just repackaging it. Optional
+audio is transcoded to AAC for HLS-compatible playback.
 
 Runs in the capture process, not the portal — see docs/architecture.md for
 why they're split. The HLS files are written to a fixed, well-known
@@ -96,7 +97,8 @@ class LiveStreamManager:
             "ffmpeg", "-nostdin", "-y", "-loglevel", "warning",
             "-rtsp_transport", "tcp", "-timeout", "15000000",
             "-i", stream.rtsp_url,
-            "-c:v", "copy", "-an",
+            "-map", "0:v:0", "-map", "0:a?",
+            "-c:v", "copy", "-c:a", "aac", "-b:a", "64k",
             "-f", "hls",
             "-hls_time", str(SEGMENT_S),
             "-hls_list_size", str(PLAYLIST_SIZE),
@@ -104,7 +106,7 @@ class LiveStreamManager:
             str(stream.out_dir / "index.m3u8"),
         ]
         log.info("starting live stream -> %s", stream.out_dir)
-        stream.log_f = open(stream.out_dir / "ffmpeg.log", "w")
+        stream.log_f = open(stream.out_dir / "ffmpeg.log", "w")  # noqa: SIM115
         stream.process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=stream.log_f)
 
     def _stop_stream(self, stream: _CameraStream) -> None:

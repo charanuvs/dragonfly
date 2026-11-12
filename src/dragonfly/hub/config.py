@@ -48,6 +48,7 @@ class CameraConfig(BaseModel):
     id: str
     name: str
     rtsp_url: str  # keep this only in config/dragonfly.yaml (gitignored) — it carries credentials
+    ir_control: bool = False
     poll_interval_s: float = 15.0
     timeout_s: float = 3.0
 

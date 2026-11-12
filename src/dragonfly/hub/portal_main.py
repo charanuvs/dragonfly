@@ -106,6 +106,8 @@ def run() -> None:
         if config.kasa_switch
         else None
     )
+    dashboard_app.state.camera_ir_controllers = {}
+    dashboard_app.state.camera_config_loader = load_config
 
     # Health monitoring lives here, not in capture — see watchdog/monitor.py.
     try:

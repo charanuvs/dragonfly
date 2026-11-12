@@ -29,7 +29,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from kasa.exceptions import KasaException
 
+from dragonfly.hub.config import load_config
 from dragonfly.hub.kasa_switch import KasaSwitchController, run_auto_off_schedule
+from dragonfly.hub.reolink_camera import ReolinkIrController
 from dragonfly.hub.sysinfo import get_system_stats
 
 log = logging.getLogger(__name__)
@@ -80,6 +82,11 @@ async def lifespan(application: FastAPI):
         await schedule_task
       except asyncio.CancelledError:
         pass
+    for controller in application.state.camera_ir_controllers.values():
+      try:
+        await controller.close()
+      except Exception:
+        log.exception("Could not close camera IR controller")
 
 
 app = FastAPI(title="Dragonfly", lifespan=lifespan)
@@ -94,6 +101,8 @@ app.state.event_bus = None
 app.state.live_dir = Path("/tmp/dragonfly-live")
 app.state.kasa_switch_config = None
 app.state.kasa_switch_controller: KasaSwitchController | None = None
+app.state.camera_ir_controllers = {}
+app.state.camera_config_loader = load_config
 
 # Staleness grace for any module that isn't a configured camera (so has no
 # poll_interval_s of its own) — i.e. the watchdog's pseudo-modules. Comfortably
@@ -116,6 +125,7 @@ def health() -> dict[str, str]:
 
 @app.get("/api/modules")
 def list_modules(request: Request) -> list[dict]:
+    _refresh_camera_config(request)
     registry = request.app.state.registry
     camera_config = request.app.state.camera_config
 
@@ -166,6 +176,7 @@ def list_modules(request: Request) -> list[dict]:
                     if status.recording_last_event is not None
                     else None
                 ),
+                "ir_control": bool(meta.ir_control) if meta else False,
                 "details": status.details,
             }
         )
@@ -233,6 +244,47 @@ async def toggle_switch(request: Request) -> dict:
     except Exception as exc:
         log.warning("Could not toggle Kasa switch %s: %s", controller.name, exc)
         raise HTTPException(status_code=503, detail="Switch unavailable") from exc
+
+
+def _refresh_camera_config(request: Request) -> None:
+    config = request.app.state.camera_config_loader()
+    request.app.state.camera_config = {camera.id: camera for camera in config.cameras}
+
+
+def _camera_ir_controller(request: Request, camera_id: str):
+    camera = request.app.state.camera_config.get(camera_id)
+    if camera is None or not camera.ir_control:
+        return None
+    controllers = request.app.state.camera_ir_controllers
+    if camera_id not in controllers:
+        controllers[camera_id] = ReolinkIrController(camera.rtsp_url)
+    return controllers[camera_id]
+
+
+@app.get("/api/cameras/{camera_id}/ir")
+async def camera_ir_status(camera_id: str, request: Request) -> dict:
+    _refresh_camera_config(request)
+    controller = _camera_ir_controller(request, camera_id)
+    if controller is None:
+        raise HTTPException(status_code=404, detail="IR control not configured")
+    try:
+        return await controller.get_state()
+    except Exception as exc:
+        log.warning("Could not read IR mode for camera %s: %s", camera_id, exc)
+        raise HTTPException(status_code=503, detail="Camera IR status unavailable") from exc
+
+
+@app.post("/api/cameras/{camera_id}/ir/cycle")
+async def cycle_camera_ir(camera_id: str, request: Request) -> dict:
+    _refresh_camera_config(request)
+    controller = _camera_ir_controller(request, camera_id)
+    if controller is None:
+        raise HTTPException(status_code=404, detail="IR control not configured")
+    try:
+        return await controller.cycle_mode()
+    except Exception as exc:
+        log.warning("Could not change IR mode for camera %s: %s", camera_id, exc)
+        raise HTTPException(status_code=503, detail="Camera IR control unavailable") from exc
 
 
 def _recording_path(request: Request, path: str) -> Path:
@@ -408,6 +460,20 @@ _INDEX_HTML = """<!doctype html>
     .switch-card button:focus-visible { outline: 3px solid var(--yellow); outline-offset: 3px; }
     .switch-card button:disabled { opacity: .55; cursor: not-allowed; }
     .switch-error { grid-column: 1 / -1; color: var(--red); }
+    .camera-ir-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1rem; align-items: start; }
+    .camera-card-content { min-width: 0; }
+    .ir-control { grid-column: 2; grid-row: 1; display: flex; min-width: 56px; flex-direction: column; align-items: center; gap: .35rem; margin-top: .1rem; }
+    .ir-label { color: var(--muted); font: 500 .65rem 'DM Mono', monospace; text-transform: uppercase; }
+    .ir-switch { position: relative; display: block; width: 52px; height: 30px; cursor: pointer; }
+    .ir-toggle { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+    .ir-track { position: absolute; inset: 0; border: 1px solid var(--ink); border-radius: 16px; background: #c9d1cb; transition: background .15s ease; }
+    .ir-track::after { position: absolute; top: 4px; left: 4px; width: 20px; height: 20px; border-radius: 50%; background: #fff; content: ''; transition: transform .15s ease; }
+    .ir-toggle:checked + .ir-track { background: var(--green); }
+    .ir-toggle:checked + .ir-track::after { transform: translateX(22px); }
+    .ir-toggle:focus-visible + .ir-track { outline: 3px solid var(--yellow); outline-offset: 3px; }
+    .ir-toggle:disabled + .ir-track { opacity: .55; cursor: not-allowed; }
+    .ir-mode { margin: 0; color: var(--ink); text-align: center; }
+    .ir-error { color: var(--red); }
     .card {
       border: 1px solid var(--ink); border-top: 5px solid var(--ink); border-radius: 2px;
       padding: 1rem 1.15rem; background: var(--paper); min-width: 0;
@@ -706,7 +772,8 @@ _INDEX_HTML = """<!doctype html>
 
     function renderModuleCard(m) {
       return `
-        <div class="card">
+        <div class="card${m.ir_control ? ' camera-ir-card' : ''}">
+          <div class="camera-card-content">
           <div class="name">${escapeHtml(m.name)}</div>
           <div class="status">
             <span class="dot ${m.online ? 'online' : 'offline'}"></span>
@@ -733,6 +800,13 @@ _INDEX_HTML = """<!doctype html>
             ? `<div class="meta"><a href="/live/${encodeURIComponent(m.module_id)}">Live view &rarr;</a></div>` : ''}
           ${m.module_type.includes('camera') && m.module_id.charAt(0) !== '_'
             ? `<div class="meta"><a href="/recordings?path=${encodeURIComponent(m.module_id)}">Browse recordings &rarr;</a></div>` : ''}
+          </div>
+          ${m.ir_control ? `<div class="ir-control" role="group" aria-label="Infrared mode">
+            <span class="ir-label">IR</span>
+            <label class="ir-switch"><input class="ir-toggle" type="checkbox" data-ir-camera-id="${escapeHtml(m.module_id)}" aria-label="Infrared mode" disabled><span class="ir-track" aria-hidden="true"></span></label>
+            <span class="meta ir-mode" aria-live="polite">Checking</span>
+            <span class="meta ir-error" aria-live="polite"></span>
+          </div>` : ''}
         </div>
       `;
     }
@@ -749,9 +823,58 @@ _INDEX_HTML = """<!doctype html>
       document.getElementById('physical-grid').innerHTML = devices.length
         ? devices.map(renderModuleCard).join('')
         : '<p class="empty">No devices reporting yet.</p>';
+      devices.filter(m => m.ir_control).forEach(m => {
+        if (irStates.has(m.module_id)) renderCameraIr(m.module_id, irStates.get(m.module_id));
+        else refreshCameraIr(m.module_id);
+      });
     }
     refresh();
     setInterval(refresh, 5000);
+
+    const irStates = new Map();
+    const irBusy = new Set();
+    function renderCameraIr(cameraId, state, error = '') {
+      irStates.set(cameraId, state);
+      const toggle = document.querySelector(`[data-ir-camera-id="${CSS.escape(cameraId)}"]`);
+      if (!toggle) return;
+      const control = toggle.closest('.ir-control');
+      toggle.checked = state?.mode === 'Auto';
+      toggle.disabled = !state || irBusy.has(cameraId);
+      control.querySelector('.ir-mode').textContent = state ? state.mode : 'Unavailable';
+      control.querySelector('.ir-error').textContent = error;
+    }
+    async function refreshCameraIr(cameraId) {
+      try {
+        const response = await fetch(`/api/cameras/${encodeURIComponent(cameraId)}/ir`, { cache: 'no-store' });
+        if (!response.ok) throw new Error('IR status unavailable');
+        renderCameraIr(cameraId, await response.json());
+      } catch {
+        renderCameraIr(cameraId, null, 'Could not read IR mode.');
+      }
+    }
+    document.getElementById('physical-grid').addEventListener('change', async event => {
+      const toggle = event.target.closest('input[data-ir-camera-id]');
+      if (!toggle || toggle.disabled) return;
+      const cameraId = toggle.dataset.irCameraId;
+      irBusy.add(cameraId);
+      toggle.disabled = true;
+      let error = '';
+      try {
+        const response = await fetch(`/api/cameras/${encodeURIComponent(cameraId)}/ir/cycle`, { method: 'POST' });
+        if (!response.ok) throw new Error('IR control unavailable');
+        renderCameraIr(cameraId, await response.json());
+      } catch {
+        error = 'Could not change IR mode.';
+      } finally {
+        irBusy.delete(cameraId);
+        renderCameraIr(cameraId, irStates.get(cameraId) || null, error);
+      }
+    });
+    setInterval(() => {
+      document.querySelectorAll('[data-ir-camera-id]').forEach(toggle => {
+        refreshCameraIr(toggle.dataset.irCameraId);
+      });
+    }, 30000);
 
     const switchCard = document.getElementById('switch-card');
     const switchName = document.getElementById('switch-name');
@@ -866,6 +989,20 @@ _DEVICES_HTML = """<!doctype html>
     button:hover:not(:disabled) { background: var(--green); }
     button:focus-visible { outline: 3px solid #e7bd53; outline-offset: 3px; }
     button:disabled { opacity: .55; cursor: not-allowed; }
+    .camera-ir-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1rem; align-items: start; }
+    .camera-card-content { min-width: 0; }
+    .ir-control { grid-column: 2; grid-row: 1; display: flex; min-width: 56px; flex-direction: column; align-items: center; gap: .35rem; margin-top: .1rem; }
+    .ir-label { color: var(--muted); font: 500 .65rem 'DM Mono', monospace; text-transform: uppercase; }
+    .ir-switch { position: relative; display: block; width: 52px; height: 30px; cursor: pointer; }
+    .ir-toggle { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+    .ir-track { position: absolute; inset: 0; border: 1px solid var(--ink); border-radius: 16px; background: #c9d1cb; transition: background .15s ease; }
+    .ir-track::after { position: absolute; top: 4px; left: 4px; width: 20px; height: 20px; border-radius: 50%; background: #fff; content: ''; transition: transform .15s ease; }
+    .ir-toggle:checked + .ir-track { background: var(--green); }
+    .ir-toggle:checked + .ir-track::after { transform: translateX(22px); }
+    .ir-toggle:focus-visible + .ir-track { outline: 3px solid #e7bd53; outline-offset: 3px; }
+    .ir-toggle:disabled + .ir-track { opacity: .55; cursor: not-allowed; }
+    .ir-mode { margin: 0; color: var(--ink); text-align: center; }
+    .ir-error { color: var(--red); }
     .error { grid-column: 1 / -1; color: var(--red); }
     .empty { color: var(--muted); }
     @media (max-width: 850px) {
@@ -980,14 +1117,70 @@ _DEVICES_HTML = """<!doctype html>
           const recordingsLink = isCamera
             ? `<div class="meta"><a href="/recordings?path=${encodeURIComponent(module.module_id)}">Browse recordings &rarr;</a></div>`
             : '';
-          return `<article class="card"><div class="name">${escapeHtml(module.name)}</div>
+          const irControl = module.ir_control
+            ? `<div class="ir-control" role="group" aria-label="Infrared mode">
+              <span class="ir-label">IR</span>
+              <label class="ir-switch"><input class="ir-toggle" type="checkbox" data-ir-camera-id="${escapeHtml(module.module_id)}" aria-label="Infrared mode" disabled><span class="ir-track" aria-hidden="true"></span></label>
+              <span class="meta ir-mode" aria-live="polite">Checking</span>
+              <span class="meta ir-error" aria-live="polite"></span>
+            </div>`
+            : '';
+          return `<article class="card${module.ir_control ? ' camera-ir-card' : ''}"><div class="camera-card-content">
+            <div class="name">${escapeHtml(module.name)}</div>
             <div class="status"><span class="dot ${module.online ? 'online' : 'offline'}"></span>${module.online ? 'Online' : 'Offline'}</div>
-            ${recording}${filename}${liveLink}${recordingsLink}</article>`;
+            ${recording}${filename}${liveLink}${recordingsLink}</div>${irControl}</article>`;
         }).join('') : '<p class="empty">No devices reporting yet.</p>';
+        devices.filter(module => module.ir_control).forEach(module => {
+          if (irStates.has(module.module_id)) renderCameraIr(module.module_id, irStates.get(module.module_id));
+          else refreshCameraIr(module.module_id);
+        });
       } catch {
         physicalGrid.innerHTML = '<p class="empty">Unable to load devices.</p>';
       }
     }
+
+    const irStates = new Map();
+    const irBusy = new Set();
+    function renderCameraIr(cameraId, state, error = '') {
+      irStates.set(cameraId, state);
+      const toggle = document.querySelector(`[data-ir-camera-id="${CSS.escape(cameraId)}"]`);
+      if (!toggle) return;
+      const control = toggle.closest('.ir-control');
+      toggle.checked = state?.mode === 'Auto';
+      toggle.disabled = !state || irBusy.has(cameraId);
+      control.querySelector('.ir-mode').textContent = state ? state.mode : 'Unavailable';
+      control.querySelector('.ir-error').textContent = error;
+    }
+    async function refreshCameraIr(cameraId) {
+      try {
+        const response = await fetch(`/api/cameras/${encodeURIComponent(cameraId)}/ir`, { cache: 'no-store' });
+        if (!response.ok) throw new Error('IR status unavailable');
+        renderCameraIr(cameraId, await response.json());
+      } catch {
+        renderCameraIr(cameraId, null, 'Could not read IR mode.');
+      }
+    }
+    physicalGrid.addEventListener('change', async event => {
+      const toggle = event.target.closest('input[data-ir-camera-id]');
+      if (!toggle || toggle.disabled) return;
+      const cameraId = toggle.dataset.irCameraId;
+      irBusy.add(cameraId);
+      toggle.disabled = true;
+      let error = '';
+      try {
+        const response = await fetch(`/api/cameras/${encodeURIComponent(cameraId)}/ir/cycle`, { method: 'POST' });
+        if (!response.ok) throw new Error('IR control unavailable');
+        renderCameraIr(cameraId, await response.json());
+      } catch {
+        error = 'Could not change IR mode.';
+      } finally {
+        irBusy.delete(cameraId);
+        renderCameraIr(cameraId, irStates.get(cameraId) || null, error);
+      }
+    });
+    window.setInterval(() => {
+      physicalGrid.querySelectorAll('[data-ir-camera-id]').forEach(toggle => refreshCameraIr(toggle.dataset.irCameraId));
+    }, 30000);
 
     refreshSwitch();
     refreshDevices();

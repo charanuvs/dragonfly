@@ -10,9 +10,11 @@ Each camera with `record: true` in config gets its own `ffmpeg` subprocess
 pipeline. Rather than trusting whatever fps/bitrate the camera happens to be
 configured for, Dragonfly re-encodes: `-vf fps=10` forces a consistent output
 frame rate regardless of the camera's native stream, and `-b:v`/`-maxrate`
-pin the bitrate so storage usage is predictable (see the table below). This
-trades a bit of CPU for not being at the mercy of whatever settings happen to
-be configured on the camera itself.
+pin the video bitrate so storage usage is predictable (see the table below).
+If the RTSP stream includes audio, Dragonfly maps it and transcodes it to AAC
+at 64 kbps; streams without audio still record normally. Audio adds a small
+amount to storage use beyond the configured video bitrate. This trades a bit of
+CPU for consistent quality and compatibility with ordinary MP4 players.
 
 ## Disk layout
 
@@ -29,6 +31,10 @@ Open **Browse recordings** on a camera card to navigate its folders and play
 completed MP4 segments in the browser. A segment still being recorded may not
 play until it finishes. Recordings share the portal's network access: anyone
 who can reach the portal can view them.
+
+Live view remuxes the camera's video stream without re-encoding and, when the
+stream provides audio, transcodes that track to AAC at 64 kbps for HLS playback.
+The live pipeline does not require the camera to have an audio track.
 
 ## Gapless cutover
 
