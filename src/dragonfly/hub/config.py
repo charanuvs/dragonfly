@@ -35,6 +35,13 @@ class DashboardConfig(BaseModel):
     port: int = 8000
 
 
+class KasaSwitchConfig(BaseModel):
+    host: str
+    name: str = "Bedroom light"
+    timezone: str = "America/Los_Angeles"
+    gpio_pin: int = 17
+
+
 class CameraConfig(BaseModel):
     id: str
     name: str
@@ -97,6 +104,7 @@ class HubConfig(BaseModel):
     storage: StorageConfig = StorageConfig()
     dashboard: DashboardConfig = DashboardConfig()
     watchdog: WatchdogConfig = WatchdogConfig()
+    kasa_switch: KasaSwitchConfig | None = None
     cameras: list[CameraConfig] = []
 
 

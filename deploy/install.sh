@@ -345,10 +345,16 @@ if [ "$OS" = "Linux" ]; then
     echo "== Installing system prerequisites (Linux apt) =="
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq
-    apt-get install -y --no-install-recommends \
-        python3 python3-venv python3-pip \
-        mosquitto mosquitto-clients \
+    LINUX_PACKAGES=(
+        python3 python3-venv python3-pip
+        mosquitto mosquitto-clients
         ffmpeg util-linux e2fsprogs curl
+    )
+    if [ "$(uname -m)" = "aarch64" ] || [ "$(uname -m)" = "armv7l" ]; then
+        LINUX_PACKAGES+=(swig liblgpio-dev)
+    fi
+    apt-get install -y --no-install-recommends \
+        "${LINUX_PACKAGES[@]}"
 elif [ "$OS" = "Darwin" ]; then
     echo "== Installing system prerequisites (macOS Homebrew) =="
     if ! command -v brew >/dev/null 2>&1; then
@@ -420,12 +426,16 @@ fi
 
 # Find wheel or install from directory
 WHEEL_FILE=$(find "$SOURCE_DIR" -maxdepth 2 -name "dragonfly-*.whl" 2>/dev/null | head -n 1 || true)
+INSTALL_EXTRAS="camera"
+if [ "$OS" = "Linux" ]; then
+    INSTALL_EXTRAS="camera,raspberry-pi"
+fi
 if [ -n "$WHEEL_FILE" ]; then
     echo "Installing wheel: $WHEEL_FILE"
-    "$INSTALL_DIR/venv/bin/pip" install "${WHEEL_FILE}[camera]"
+    "$INSTALL_DIR/venv/bin/pip" install "${WHEEL_FILE}[$INSTALL_EXTRAS]"
 else
     echo "Installing from source directory: $SOURCE_DIR"
-    "$INSTALL_DIR/venv/bin/pip" install "${SOURCE_DIR}[camera]"
+    "$INSTALL_DIR/venv/bin/pip" install "${SOURCE_DIR}[$INSTALL_EXTRAS]"
 fi
 
 # 5. Configuration directory and default config

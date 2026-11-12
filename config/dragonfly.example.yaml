@@ -19,6 +19,14 @@ dashboard:
                         # never gets a route to the dashboard anyway (see docs/network.md)
   port: 8000
 
+# Optional local Kasa switch control. Auto-off runs at 12:00 AM and 12:00 PM
+# in the configured timezone. GPIO17 is the button input, wired to ground.
+kasa_switch:
+  host: 192.168.1.50
+  name: "Kasa light"
+  timezone: America/Los_Angeles
+  gpio_pin: 17
+
 # Health monitoring, run by the portal process (not capture — a component
 # can't report its own death). Checks camera reachability, storage health,
 # whether recordings are actually landing on disk, and whether the capture

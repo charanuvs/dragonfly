@@ -32,6 +32,7 @@ from dragonfly.dashboard.app import app as dashboard_app
 from dragonfly.dashboard.live import DEFAULT_LIVE_DIR
 from dragonfly.hub.config import load_config
 from dragonfly.hub.eventbus import EventBus
+from dragonfly.hub.kasa_switch import KasaSwitchController
 from dragonfly.hub.registry import DeviceRegistry
 from dragonfly.watchdog.alerts import AlertManager, Ntfy
 from dragonfly.watchdog.monitor import Watchdog
@@ -99,6 +100,12 @@ def run() -> None:
     dashboard_app.state.recordings_path = config.storage.recordings_path
     dashboard_app.state.event_bus = bus
     dashboard_app.state.live_dir = DEFAULT_LIVE_DIR
+    dashboard_app.state.kasa_switch_config = config.kasa_switch
+    dashboard_app.state.kasa_switch_controller = (
+        KasaSwitchController(config.kasa_switch.host, config.kasa_switch.name)
+        if config.kasa_switch
+        else None
+    )
 
     # Health monitoring lives here, not in capture — see watchdog/monitor.py.
     try:

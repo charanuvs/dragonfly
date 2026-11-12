@@ -1,6 +1,6 @@
 """Local-LAN monitoring dashboard (FastAPI).
 
-Bound to the hub host's LAN interface only (config.dashboard.bind_host) — see
+Bound to the Pi's LAN interface only (config.dashboard.bind_host) — see
 docs/network.md. Runs in the portal process (hub/portal_main.py), which is
 independent from the capture process (hub/capture_main.py) that actually
 owns the heartbeat/recorder/live-stream ffmpeg — see docs/architecture.md.
@@ -19,15 +19,70 @@ nothing is publishing to the shared HLS directory.)
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
+from kasa.exceptions import KasaException
 
+from dragonfly.hub.kasa_switch import KasaSwitchController, run_auto_off_schedule
 from dragonfly.hub.sysinfo import get_system_stats
 
-app = FastAPI(title="Dragonfly")
+log = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+  controller = application.state.kasa_switch_controller
+  switch_config = application.state.kasa_switch_config
+  schedule_task = None
+  button = None
+
+  if controller is not None and switch_config is not None:
+    schedule_task = asyncio.create_task(
+      run_auto_off_schedule(controller, switch_config.timezone)
+    )
+    try:
+      from gpiozero import Button
+
+      button = Button(switch_config.gpio_pin, pull_up=True, bounce_time=0.05)
+      loop = asyncio.get_running_loop()
+
+      def toggle_from_button() -> None:
+        future = asyncio.run_coroutine_threadsafe(controller.toggle(), loop)
+
+        def report_result(result) -> None:
+          try:
+            state = result.result()
+          except KasaException as exc:
+            log.error("GPIO button failed to toggle %s: %s", controller.name, exc)
+          else:
+            log.info("GPIO button set %s to %s", controller.name, "on" if state else "off")
+
+        future.add_done_callback(report_result)
+
+      button.when_pressed = toggle_from_button
+    except Exception:
+      log.exception("GPIO button unavailable; dashboard switch control remains enabled")
+
+  try:
+    yield
+  finally:
+    if button is not None:
+      button.close()
+    if schedule_task is not None:
+      schedule_task.cancel()
+      try:
+        await schedule_task
+      except asyncio.CancelledError:
+        pass
+
+
+app = FastAPI(title="Dragonfly", lifespan=lifespan)
 
 # Set by hub/portal_main.py at startup. Left as None/{}/"." so the app still
 # imports (and /health works) if run standalone.
@@ -37,6 +92,8 @@ app.state.storage_path = "/"
 app.state.recordings_path = None
 app.state.event_bus = None
 app.state.live_dir = Path("/tmp/dragonfly-live")
+app.state.kasa_switch_config = None
+app.state.kasa_switch_controller: KasaSwitchController | None = None
 
 # Staleness grace for any module that isn't a configured camera (so has no
 # poll_interval_s of its own) — i.e. the watchdog's pseudo-modules. Comfortably
@@ -61,12 +118,10 @@ def health() -> dict[str, str]:
 def list_modules(request: Request) -> list[dict]:
     registry = request.app.state.registry
     camera_config = request.app.state.camera_config
-    if registry is None:
-        return []
 
     now = time.time()
     modules = []
-    for status in registry.all():
+    for status in registry.all() if registry is not None else ():
         meta = camera_config.get(status.module_id)
 
         # A module is only "online" if we've heard from it recently — a
@@ -114,12 +169,70 @@ def list_modules(request: Request) -> list[dict]:
                 "details": status.details,
             }
         )
+
+    switch_controller = request.app.state.kasa_switch_controller
+    switch_config = request.app.state.kasa_switch_config
+    if switch_controller is not None:
+        modules.append(
+            {
+                "module_id": "_kasa_switch",
+                "module_type": "service",
+                "name": "Kasa switch manager",
+                "online": True,
+                "last_seen": now,
+                "seconds_since_seen": 0,
+                "recording_enabled": False,
+                "recording_active": False,
+                "recording_last_segment": None,
+                "recording_seconds_since_event": None,
+                "details": {
+                  "host": switch_config.host if switch_config else switch_controller.host,
+                    "schedule": "off at 12:00 AM and 12:00 PM",
+                  "timezone": switch_config.timezone if switch_config else "America/Los_Angeles",
+                  "gpio_pin": switch_config.gpio_pin if switch_config else 17,
+                },
+            }
+        )
     return modules
 
 
 @app.get("/api/system")
 def system_stats(request: Request) -> dict:
     return get_system_stats(request.app.state.storage_path)
+
+
+@app.get("/api/switch")
+async def switch_status(request: Request) -> dict:
+    controller = request.app.state.kasa_switch_controller
+    if controller is None:
+        raise HTTPException(status_code=404, detail="Switch not configured")
+    try:
+      switch_config = request.app.state.kasa_switch_config
+      return {
+        "name": controller.name,
+        "on": await controller.get_state(),
+        "timezone": switch_config.timezone if switch_config else "America/Los_Angeles",
+      }
+    except Exception as exc:
+        log.warning("Could not read Kasa switch %s: %s", controller.name, exc)
+        raise HTTPException(status_code=503, detail="Switch unavailable") from exc
+
+
+@app.post("/api/switch/toggle")
+async def toggle_switch(request: Request) -> dict:
+    controller = request.app.state.kasa_switch_controller
+    if controller is None:
+        raise HTTPException(status_code=404, detail="Switch not configured")
+    try:
+      switch_config = request.app.state.kasa_switch_config
+      return {
+        "name": controller.name,
+        "on": await controller.toggle(),
+        "timezone": switch_config.timezone if switch_config else "America/Los_Angeles",
+      }
+    except Exception as exc:
+        log.warning("Could not toggle Kasa switch %s: %s", controller.name, exc)
+        raise HTTPException(status_code=503, detail="Switch unavailable") from exc
 
 
 def _recording_path(request: Request, path: str) -> Path:
@@ -269,8 +382,25 @@ _INDEX_HTML = """<!doctype html>
     .section-kicker { color: var(--muted); }
     .grid {
       display: grid; gap: 1rem; align-items: stretch; grid-auto-rows: 1fr;
-      grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 390px), 1fr));
     }
+    .service-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .device-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .physical-grid { display: contents; }
+    .switch-card {
+      display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: .75rem;
+      border-top-color: var(--green);
+    }
+    .switch-card button { width: 100%; }
+    .switch-card button {
+      min-width: 112px; min-height: 42px; border: 1px solid var(--ink); border-radius: 2px;
+      padding: .6rem .9rem; background: var(--ink); color: #f4f6ee;
+      font: 600 .85rem 'Space Grotesk', sans-serif; cursor: pointer;
+    }
+    .switch-card button:hover:not(:disabled) { background: var(--green); }
+    .switch-card button:focus-visible { outline: 3px solid var(--yellow); outline-offset: 3px; }
+    .switch-card button:disabled { opacity: .55; cursor: not-allowed; }
+    .switch-error { grid-column: 1 / -1; color: var(--red); }
     .card {
       border: 1px solid var(--ink); border-top: 5px solid var(--ink); border-radius: 2px;
       padding: 1rem 1.15rem; background: var(--paper); min-width: 0;
@@ -322,12 +452,15 @@ _INDEX_HTML = """<!doctype html>
     @media (max-width: 600px) {
       body { padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right))
                      max(1.5rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)); }
+      .grid { grid-template-columns: minmax(0, 1fr); }
       h1 { font-size: 1.35rem; }
       .masthead-note { display: none; }
       .masthead { margin-bottom: 1rem; }
       .sysbar { margin-bottom: 1.5rem; }
       .sysbar span { padding: .7rem .75rem; }
       .history-card { margin-bottom: 1.5rem; }
+      .switch-card { grid-template-columns: minmax(0, 1fr); }
+      .switch-card button { width: 100%; }
     }
   </style>
 </head>
@@ -369,13 +502,26 @@ _INDEX_HTML = """<!doctype html>
       </div>
     </div>
   </div>
+  <div class="section-heading"><h2>Service health</h2><span class="section-kicker">Portal &amp; system services</span></div>
+  <div id="service-grid" class="grid service-grid"><p class="empty">Loading...</p></div>
   <div class="section-heading"><h2>Devices</h2><span class="section-kicker">Live status</span></div>
-  <div id="grid" class="grid"><p class="empty">Loading...</p></div>
+  <div id="grid" class="grid device-grid">
+    <div id="switch-card" class="card switch-card">
+      <div>
+        <div class="name" id="switch-name">Bedroom light</div>
+        <div class="status"><span id="switch-dot" class="dot"></span><span id="switch-state">Checking</span></div>
+        <div class="meta" id="switch-schedule">Daily auto-off at 12:00 AM and 12:00 PM.</div>
+      </div>
+      <button id="switch-toggle" type="button" disabled>Loading</button>
+      <div id="switch-error" class="meta switch-error" aria-live="polite"></div>
+    </div>
+    <div id="physical-grid" class="physical-grid"><p class="empty">Loading...</p></div>
+  </div>
   </main>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js"></script>
   <script>
     // Purely client-side: polls /api/system every second and accumulates
-    // points itself — nothing persisted on the host, resets whenever this page
+    // points itself — nothing persisted on the Pi, resets whenever this page
     // reloads. Capped to the last 5 minutes so a tab left open for hours
     // doesn't grow without bound.
     const MAX_POINTS = 300;
@@ -477,6 +623,7 @@ _INDEX_HTML = """<!doctype html>
       newest_segment: 'newest file', newest_age_s: 'file age',
       newest_size_bytes: 'file size', state: 'systemd', service: 'unit',
       host: 'host', port: 'port', mount_point: 'mount', path: 'recordings', error: 'error',
+      schedule: 'schedule', timezone: 'timezone', gpio_pin: 'button GPIO',
       capture_report: 'capture says', full: 'full', mounted: 'mounted',
       healthy: 'readable', stale_after_s: 'stale after', root: 'path',
     };
@@ -550,16 +697,8 @@ _INDEX_HTML = """<!doctype html>
       return skip;
     }
 
-    async function refresh() {
-      const res = await fetch('/api/modules');
-      const modules = await res.json();
-      const grid = document.getElementById('grid');
-      if (!modules.length) {
-        grid.innerHTML = '<p class="empty">No modules reporting yet.</p>';
-        return;
-      }
-      const hasCameras = modules.some(m => m.module_type.includes('camera') && m.module_id.charAt(0) !== '_');
-      const cards = modules.map(m => `
+    function renderModuleCard(m) {
+      return `
         <div class="card">
           <div class="name">${escapeHtml(m.name)}</div>
           <div class="status">
@@ -584,27 +723,91 @@ _INDEX_HTML = """<!doctype html>
             ? '<div class="meta">no recording activity yet</div>' : ''}` : ''}
           ${renderDetails(m.details, detailKeysToSkip(m))}
           ${m.module_type.includes('camera') && m.module_id.charAt(0) !== '_'
-            ? `<div class="meta"><a href="/live/${escapeHtml(m.module_id)}">Live view &rarr;</a></div>` : ''}
+            ? `<div class="meta"><a href="/live/${encodeURIComponent(m.module_id)}">Live view &rarr;</a></div>` : ''}
           ${m.module_type.includes('camera') && m.module_id.charAt(0) !== '_'
             ? `<div class="meta"><a href="/recordings?path=${encodeURIComponent(m.module_id)}">Browse recordings &rarr;</a></div>` : ''}
         </div>
-      `);
+      `;
+    }
 
-      if (!hasCameras) {
-        cards.push(`
-          <div class="card" style="border-style:dashed; opacity:0.85">
-            <div class="name">No Cameras Configured</div>
-            <div class="meta" style="margin-top:0.5rem; line-height:1.5">
-              Add your RTSP camera streams to <code style="color:#4da3ff; background:#222; padding:2px 4px; border-radius:3px">dragonfly.yaml</code>, then restart the services.
-            </div>
-          </div>
-        `);
-      }
-
-      grid.innerHTML = cards.join('');
+    async function refresh() {
+      const res = await fetch('/api/modules');
+      const modules = await res.json();
+      const serviceTypes = new Set(['capture_process', 'storage', 'service']);
+      const services = modules.filter(m => serviceTypes.has(m.module_type));
+      const devices = modules.filter(m => !serviceTypes.has(m.module_type));
+      document.getElementById('service-grid').innerHTML = services.length
+        ? services.map(renderModuleCard).join('')
+        : '<p class="empty">No services reporting yet.</p>';
+      document.getElementById('physical-grid').innerHTML = devices.length
+        ? devices.map(renderModuleCard).join('')
+        : '<p class="empty">No devices reporting yet.</p>';
     }
     refresh();
     setInterval(refresh, 5000);
+
+    const switchCard = document.getElementById('switch-card');
+    const switchName = document.getElementById('switch-name');
+    const switchState = document.getElementById('switch-state');
+    const switchDot = document.getElementById('switch-dot');
+    const switchSchedule = document.getElementById('switch-schedule');
+    const switchToggle = document.getElementById('switch-toggle');
+    const switchError = document.getElementById('switch-error');
+    let switchBusy = false;
+    let switchAvailable = false;
+
+    function renderSwitch(state) {
+      switchAvailable = true;
+      switchCard.hidden = false;
+      switchName.textContent = state.name;
+      switchState.textContent = state.on ? 'ON' : 'OFF';
+      switchDot.className = `dot ${state.on ? 'online' : 'offline'}`;
+      switchSchedule.textContent = `Daily auto-off at 12:00 AM and 12:00 PM (${state.timezone}).`;
+      switchToggle.textContent = state.on ? 'Turn off' : 'Turn on';
+      switchToggle.disabled = switchBusy;
+      switchError.textContent = '';
+    }
+
+    async function refreshSwitch() {
+      try {
+        const response = await fetch('/api/switch', { cache: 'no-store' });
+        if (response.status === 404) {
+          switchAvailable = false;
+          switchCard.hidden = true;
+          return;
+        }
+        if (!response.ok) throw new Error('Switch unavailable');
+        renderSwitch(await response.json());
+      } catch {
+        switchAvailable = false;
+        switchCard.hidden = false;
+        switchState.textContent = 'UNAVAILABLE';
+        switchDot.className = 'dot offline';
+        switchToggle.textContent = 'Unavailable';
+        switchToggle.disabled = true;
+        switchError.textContent = 'Could not read the switch state.';
+      }
+    }
+
+    switchToggle.addEventListener('click', async () => {
+      if (switchBusy || !switchAvailable) return;
+      switchBusy = true;
+      switchToggle.disabled = true;
+      switchError.textContent = '';
+      try {
+        const response = await fetch('/api/switch/toggle', { method: 'POST' });
+        if (!response.ok) throw new Error('Switch unavailable');
+        renderSwitch(await response.json());
+      } catch {
+        switchError.textContent = 'Could not toggle the switch.';
+        await refreshSwitch();
+      } finally {
+        switchBusy = false;
+        switchToggle.disabled = !switchAvailable;
+      }
+    });
+    refreshSwitch();
+    setInterval(refreshSwitch, 1000);
   </script>
 </body>
 </html>"""
