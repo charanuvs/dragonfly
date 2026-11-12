@@ -33,6 +33,8 @@ class StorageConfig(BaseModel):
 class DashboardConfig(BaseModel):
     bind_host: str = "0.0.0.0"  # bound to the LAN interface only; see docs/network.md
     port: int = 8000
+    tls_certfile: str | None = None
+    tls_keyfile: str | None = None
 
 
 class KasaSwitchConfig(BaseModel):

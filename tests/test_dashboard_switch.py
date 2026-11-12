@@ -34,6 +34,7 @@ def test_switch_status_toggle_and_live_dashboard(monkeypatch):
         page = client.get("/").text
         assert "<h2>Service health</h2>" in page
         assert "<h2>Devices</h2>" in page
+        assert page.index("<h2>Service health</h2>") < page.index("<h2>Devices</h2>")
         assert "id=\"switch-toggle\"" in page
         assert "Daily auto-off at 12:00 AM and 12:00 PM" in page
         assert 'id="switch-card" class="card switch-card"' in page
@@ -57,6 +58,20 @@ def test_switch_api_reports_unavailable_controller(monkeypatch):
 
     assert response.status_code == 503
     assert response.json()["detail"] == "Switch unavailable"
+
+
+def test_devices_page_only_contains_device_controls():
+    with TestClient(app) as client:
+        response = client.get("/devices")
+        dashboard = client.get("/").text
+
+    assert response.status_code == 200
+    assert "Connected devices" in response.text
+    assert 'id="switch-toggle"' in response.text
+    assert "fetch('/api/modules'" in response.text
+    assert "Service health" not in response.text
+    assert "historyChart" not in response.text
+    assert 'href="/devices"' in dashboard
 
 
 def test_module_api_classifies_services_and_devices(monkeypatch):

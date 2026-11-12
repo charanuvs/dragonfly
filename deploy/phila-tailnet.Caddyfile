@@ -1,0 +1,15 @@
+{
+    auto_https disable_redirects
+}
+
+https://phila.int {
+    bind 100.72.242.83
+    tls /etc/caddy/tls/phila-services-int.crt /etc/caddy/tls/phila-services.key
+    reverse_proxy 127.0.0.1:8000
+}
+
+https://video.phila.int {
+    bind 100.72.242.83
+    tls /etc/caddy/tls/phila-services-int.crt /etc/caddy/tls/phila-services.key
+    reverse_proxy 127.0.0.1:8096
+}

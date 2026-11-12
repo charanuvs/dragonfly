@@ -285,6 +285,11 @@ def index() -> str:
     return _INDEX_HTML
 
 
+@app.get("/devices", response_class=HTMLResponse)
+def devices_page() -> str:
+  return _DEVICES_HTML
+
+
 @app.get("/recordings", response_class=HTMLResponse)
 def recordings_page() -> str:
   return _RECORDINGS_HTML
@@ -380,6 +385,8 @@ _INDEX_HTML = """<!doctype html>
     }
     .section-heading h2 { font-size: 1rem; margin: 0; text-transform: uppercase; }
     .section-kicker { color: var(--muted); }
+    .section-kicker a { color: #176957; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+    .section-kicker a:hover { color: var(--red); }
     .grid {
       display: grid; gap: 1rem; align-items: stretch; grid-auto-rows: 1fr;
       grid-template-columns: repeat(auto-fit, minmax(min(100%, 390px), 1fr));
@@ -504,7 +511,7 @@ _INDEX_HTML = """<!doctype html>
   </div>
   <div class="section-heading"><h2>Service health</h2><span class="section-kicker">Portal &amp; system services</span></div>
   <div id="service-grid" class="grid service-grid"><p class="empty">Loading...</p></div>
-  <div class="section-heading"><h2>Devices</h2><span class="section-kicker">Live status</span></div>
+  <div class="section-heading"><h2>Devices</h2><span class="section-kicker">Live status &middot; <a href="/devices">Open device page</a></span></div>
   <div id="grid" class="grid device-grid">
     <div id="switch-card" class="card switch-card">
       <div>
@@ -808,6 +815,184 @@ _INDEX_HTML = """<!doctype html>
     });
     refreshSwitch();
     setInterval(refreshSwitch, 1000);
+  </script>
+</body>
+</html>"""
+
+_DEVICES_HTML = """<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#e7ebe8">
+  <title>Dragonfly &mdash; Devices</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --ink: #202c29; --muted: #64716c; --paper: #f7f8f4;
+      --line: #aab4ae; --green: #2a7764; --red: #c84b38;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Space Grotesk', sans-serif;
+      background: repeating-linear-gradient(0deg, #e7ebe8, #e7ebe8 3px, #e3e8e4 3px, #e3e8e4 4px);
+      color: var(--ink); margin: 0;
+      padding: max(1.5rem, env(safe-area-inset-top)) max(1.5rem, env(safe-area-inset-right))
+               max(2rem, env(safe-area-inset-bottom)) max(1.5rem, env(safe-area-inset-left));
+      -webkit-text-size-adjust: 100%;
+    }
+    main { max-width: 1440px; margin: 0 auto; }
+    header { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; border-bottom: 3px solid var(--ink); padding-bottom: 1rem; }
+    h1 { margin: 0; font-size: 1.65rem; text-transform: uppercase; }
+    a { color: #176957; text-underline-offset: 3px; }
+    a:hover { color: var(--red); }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin: 1.5rem 0 .75rem; }
+    .section-heading h2 { margin: 0; font-size: 1rem; text-transform: uppercase; }
+    .section-kicker, .meta { color: var(--muted); font: 400 .72rem/1.5 'DM Mono', monospace; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 390px), 1fr)); gap: 1rem; align-items: stretch; }
+    .card { min-width: 0; border: 1px solid var(--ink); border-top: 5px solid var(--ink); border-radius: 2px; padding: 1rem 1.15rem; background: var(--paper); box-shadow: 3px 3px 0 #bec8c1; }
+    .switch-card { border-top-color: var(--green); display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 1rem; }
+    .name { margin-bottom: .85rem; font-size: 1.1rem; font-weight: 700; overflow-wrap: anywhere; }
+    .status { display: flex; align-items: center; gap: .55rem; margin-top: .55rem; font-size: .9rem; font-weight: 600; }
+    .dot { width: 9px; height: 9px; flex: none; display: inline-block; border: 1px solid var(--ink); border-radius: 50%; }
+    .dot.online { background: #69b68f; }
+    .dot.offline { background: #ed6b50; }
+    .meta { margin-top: .3rem; overflow-wrap: anywhere; }
+    .file { color: var(--ink); }
+    button { min-width: 112px; min-height: 42px; border: 1px solid var(--ink); border-radius: 2px; padding: .6rem .9rem; background: var(--ink); color: #f4f6ee; font: 600 .85rem 'Space Grotesk', sans-serif; cursor: pointer; }
+    button:hover:not(:disabled) { background: var(--green); }
+    button:focus-visible { outline: 3px solid #e7bd53; outline-offset: 3px; }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    .error { grid-column: 1 / -1; color: var(--red); }
+    .empty { color: var(--muted); }
+    @media (max-width: 850px) {
+      .switch-card { grid-template-columns: minmax(0, 1fr); align-content: start; }
+      .switch-card button { width: 100%; }
+    }
+    @media (max-width: 600px) {
+      body { padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1.5rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)); }
+      header { align-items: flex-start; flex-direction: column; }
+      h1 { font-size: 1.35rem; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header><h1>Devices</h1><a href="/">&larr; Dashboard</a></header>
+    <div class="section-heading"><h2>Connected devices</h2><span class="section-kicker">Live status</span></div>
+    <div class="grid">
+      <article id="switch-card" class="card switch-card">
+        <div>
+          <div class="name" id="switch-name">Bedroom light</div>
+          <div class="status"><span id="switch-dot" class="dot"></span><span id="switch-state">Checking</span></div>
+          <div class="meta" id="switch-schedule">Daily auto-off at 12:00 AM and 12:00 PM.</div>
+        </div>
+        <button id="switch-toggle" type="button" disabled>Loading</button>
+        <div id="switch-error" class="meta error" aria-live="polite"></div>
+      </article>
+      <div id="physical-grid" style="display:contents"><p class="empty">Loading devices...</p></div>
+    </div>
+  </main>
+  <script>
+    const switchCard = document.querySelector('#switch-card');
+    const switchName = document.querySelector('#switch-name');
+    const switchState = document.querySelector('#switch-state');
+    const switchDot = document.querySelector('#switch-dot');
+    const switchSchedule = document.querySelector('#switch-schedule');
+    const switchToggle = document.querySelector('#switch-toggle');
+    const switchError = document.querySelector('#switch-error');
+    const physicalGrid = document.querySelector('#physical-grid');
+    let switchBusy = false;
+    let switchAvailable = false;
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function renderSwitch(state) {
+      switchAvailable = true;
+      switchName.textContent = state.name;
+      switchState.textContent = state.on ? 'ON' : 'OFF';
+      switchDot.className = `dot ${state.on ? 'online' : 'offline'}`;
+      switchSchedule.textContent = `Daily auto-off at 12:00 AM and 12:00 PM (${state.timezone}).`;
+      switchToggle.textContent = state.on ? 'Turn off' : 'Turn on';
+      switchToggle.disabled = switchBusy;
+      switchError.textContent = '';
+    }
+
+    async function refreshSwitch() {
+      try {
+        const response = await fetch('/api/switch', { cache: 'no-store' });
+        if (!response.ok) throw new Error('Switch unavailable');
+        renderSwitch(await response.json());
+      } catch {
+        switchAvailable = false;
+        switchState.textContent = 'UNAVAILABLE';
+        switchDot.className = 'dot offline';
+        switchToggle.textContent = 'Unavailable';
+        switchToggle.disabled = true;
+        switchError.textContent = 'Could not read the switch state.';
+      }
+    }
+
+    switchToggle.addEventListener('click', async () => {
+      if (switchBusy || !switchAvailable) return;
+      switchBusy = true;
+      switchToggle.disabled = true;
+      switchError.textContent = '';
+      try {
+        const response = await fetch('/api/switch/toggle', { method: 'POST' });
+        if (!response.ok) throw new Error('Switch unavailable');
+        renderSwitch(await response.json());
+      } catch {
+        switchError.textContent = 'Could not toggle the switch.';
+        await refreshSwitch();
+      } finally {
+        switchBusy = false;
+        switchToggle.disabled = !switchAvailable;
+      }
+    });
+
+    async function refreshDevices() {
+      try {
+        const response = await fetch('/api/modules', { cache: 'no-store' });
+        if (!response.ok) throw new Error('Devices unavailable');
+        const modules = await response.json();
+        const devices = modules.filter(module =>
+          !['_capture', '_storage', '_kasa_switch'].includes(module.module_id)
+          && !['service', 'storage', 'capture_process'].includes(module.module_type)
+        );
+        physicalGrid.innerHTML = devices.length ? devices.map(module => {
+          const isCamera = module.module_type.includes('camera');
+          const recording = module.recording_enabled
+            ? `<div class="status"><span class="dot ${module.recording_active ? 'online' : 'offline'}"></span>${module.recording_active ? 'Recording to disk' : 'Not recording'}</div>`
+            : '';
+          const filename = module.recording_last_segment
+            ? `<div class="meta file">${escapeHtml(String(module.recording_last_segment).split('/').slice(-3).join('/'))}</div>`
+            : '';
+          const liveLink = isCamera
+            ? `<div class="meta"><a href="/live/${encodeURIComponent(module.module_id)}">Live view &rarr;</a></div>`
+            : '';
+          const recordingsLink = isCamera
+            ? `<div class="meta"><a href="/recordings?path=${encodeURIComponent(module.module_id)}">Browse recordings &rarr;</a></div>`
+            : '';
+          return `<article class="card"><div class="name">${escapeHtml(module.name)}</div>
+            <div class="status"><span class="dot ${module.online ? 'online' : 'offline'}"></span>${module.online ? 'Online' : 'Offline'}</div>
+            ${recording}${filename}${liveLink}${recordingsLink}</article>`;
+        }).join('') : '<p class="empty">No devices reporting yet.</p>';
+      } catch {
+        physicalGrid.innerHTML = '<p class="empty">Unable to load devices.</p>';
+      }
+    }
+
+    refreshSwitch();
+    refreshDevices();
+    window.setInterval(refreshSwitch, 1000);
+    window.setInterval(refreshDevices, 5000);
   </script>
 </body>
 </html>"""

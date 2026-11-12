@@ -127,8 +127,21 @@ def run() -> None:
         config.dashboard.port,
         config.watchdog.interval_s,
     )
+    tls_options = {}
+    if config.dashboard.tls_certfile or config.dashboard.tls_keyfile:
+        if not config.dashboard.tls_certfile or not config.dashboard.tls_keyfile:
+            raise ValueError("Both dashboard.tls_certfile and dashboard.tls_keyfile are required for HTTPS")
+        tls_options = {
+            "ssl_certfile": config.dashboard.tls_certfile,
+            "ssl_keyfile": config.dashboard.tls_keyfile,
+        }
     try:
-        uvicorn.run(dashboard_app, host=config.dashboard.bind_host, port=config.dashboard.port)
+        uvicorn.run(
+            dashboard_app,
+            host=config.dashboard.bind_host,
+            port=config.dashboard.port,
+            **tls_options,
+        )
     finally:
         watchdog.stop()
         if alerts is not None:
