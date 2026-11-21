@@ -1,0 +1,18 @@
+[Unit]
+Description=Dragonfly host and service watchdog
+After=network-online.target dfly-mqtt.service dfly-capture.service dfly-detect.service dfly-devices.service dfly-dashboard.service
+Wants=network-online.target dfly-mqtt.service
+
+[Service]
+Type=simple
+User=@SERVICE_USER@
+Group=@SERVICE_GROUP@
+WorkingDirectory=@INSTALL_DIR@
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-@CONFIG_DIR@/alerts.env
+ExecStart=@VENV_DIR@/bin/dfly-watchdog
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

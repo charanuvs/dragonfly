@@ -1,7 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 
-from dragonfly.modules.camera.recorder import compute_segment_path
+from dragonfly.common.recordings import compute_segment_path
 
 
 def test_first_segment_of_hour():

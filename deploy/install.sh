@@ -20,6 +20,7 @@ if [ "$OS" = "Linux" ]; then
         exit 1
     fi
     INSTALL_DIR="${DRAGONFLY_INSTALL_DIR:-/opt/dragonfly}"
+    VENV_DIR="${DRAGONFLY_VENV_DIR:-$INSTALL_DIR/venv}"
     CONFIG_DIR="${DRAGONFLY_CONFIG_DIR:-/etc/dragonfly}"
     SERVICE_USER="${DRAGONFLY_USER:-dragonfly}"
     SERVICE_GROUP="${DRAGONFLY_GROUP:-dragonfly}"
@@ -30,6 +31,7 @@ elif [ "$OS" = "Darwin" ]; then
     REAL_USER="${SUDO_USER:-$(id -un)}"
     USER_HOME="$(eval echo "~$REAL_USER")"
     INSTALL_DIR="${DRAGONFLY_INSTALL_DIR:-$USER_HOME/.local/share/dragonfly}"
+    VENV_DIR="${DRAGONFLY_VENV_DIR:-$INSTALL_DIR/venv}"
     CONFIG_DIR="${DRAGONFLY_CONFIG_DIR:-$USER_HOME/.config/dragonfly}"
     SERVICE_USER="$REAL_USER"
     SERVICE_GROUP="$(id -gn "$REAL_USER")"
@@ -395,12 +397,23 @@ if [ "$OS" = "Linux" ]; then
     if getent group video >/dev/null; then
         usermod -a -G video "$SERVICE_USER"
     fi
+    if getent group gpio >/dev/null; then
+        usermod -a -G gpio "$SERVICE_USER"
+    fi
 fi
 
 # 4. Stop running services prior to file updates
 echo "== Preparing application directory =="
 if [ "$OS" = "Linux" ]; then
-    systemctl stop dragonfly-capture dragonfly-portal 2>/dev/null || true
+    systemctl stop \
+        dragonfly-capture dragonfly-portal \
+        dragonfly-mount-watchdog.timer dragonfly-mount-watchdog.service \
+        dfly-capture dfly-watchdog dfly-detect dfly-devices dfly-dashboard \
+        dfly-mount-watchdog.timer dfly-mount-watchdog.service \
+        2>/dev/null || true
+    systemctl disable \
+        dragonfly-capture dragonfly-portal dragonfly-mount-watchdog.timer \
+        dragonfly-mount-watchdog.service 2>/dev/null || true
 elif [ "$OS" = "Darwin" ]; then
     launchctl unload "$USER_HOME/Library/LaunchAgents/com.dragonfly.capture.plist" 2>/dev/null || true
     launchctl unload "$USER_HOME/Library/LaunchAgents/com.dragonfly.portal.plist" 2>/dev/null || true
@@ -418,11 +431,11 @@ if [ -d "$INSTALL_DIR" ] && [ ! -w "$INSTALL_DIR" ]; then
     sudo chown -R "$SERVICE_USER:$SERVICE_GROUP" "$INSTALL_DIR" 2>/dev/null || true
 fi
 
-if [ ! -d "$INSTALL_DIR/venv" ]; then
-    python3 -m venv "$INSTALL_DIR/venv"
+if [ ! -d "$VENV_DIR" ]; then
+    python3 -m venv "$VENV_DIR"
 fi
 
-"$INSTALL_DIR/venv/bin/pip" install --upgrade pip
+"$VENV_DIR/bin/pip" install --upgrade pip
 
 # Find wheel or install from directory
 WHEEL_FILE=$(find "$SOURCE_DIR" -maxdepth 2 -name "dragonfly-*.whl" 2>/dev/null | head -n 1 || true)
@@ -432,10 +445,10 @@ if [ "$OS" = "Linux" ]; then
 fi
 if [ -n "$WHEEL_FILE" ]; then
     echo "Installing wheel: $WHEEL_FILE"
-    "$INSTALL_DIR/venv/bin/pip" install "${WHEEL_FILE}[$INSTALL_EXTRAS]"
+    "$VENV_DIR/bin/pip" install "${WHEEL_FILE}[$INSTALL_EXTRAS]"
 else
     echo "Installing from source directory: $SOURCE_DIR"
-    "$INSTALL_DIR/venv/bin/pip" install "${SOURCE_DIR}[$INSTALL_EXTRAS]"
+    "$VENV_DIR/bin/pip" install "${SOURCE_DIR}[$INSTALL_EXTRAS]"
 fi
 
 # 5. Configuration directory and default config
@@ -448,7 +461,7 @@ if [ -d "$CONFIG_DIR" ] && [ ! -w "$CONFIG_DIR" ]; then
     sudo chown -R "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_DIR" 2>/dev/null || true
 fi
 
-PYTHON_VENV="$INSTALL_DIR/venv/bin/python"
+PYTHON_VENV="$VENV_DIR/bin/python"
 if [ ! -x "$PYTHON_VENV" ]; then
     PYTHON_VENV="python3"
 fi
@@ -549,31 +562,60 @@ if [ "$OS" = "Linux" ]; then
     chown -R "$SERVICE_USER:$SERVICE_GROUP" "$INSTALL_DIR"
 
     echo "== Installing systemd services =="
-    cp "$SOURCE_DIR/deploy/dragonfly-capture.service" /etc/systemd/system/dragonfly-capture.service
-    cp "$SOURCE_DIR/deploy/dragonfly-portal.service" /etc/systemd/system/dragonfly-portal.service
-    cp "$SOURCE_DIR/deploy/dragonfly-mount-watchdog.service" /etc/systemd/system/dragonfly-mount-watchdog.service
-    cp "$SOURCE_DIR/deploy/dragonfly-mount-watchdog.timer" /etc/systemd/system/dragonfly-mount-watchdog.timer
+    for service in capture watchdog detect devices dashboard; do
+        sed \
+            -e "s|@SERVICE_USER@|$SERVICE_USER|g" \
+            -e "s|@SERVICE_GROUP@|$SERVICE_GROUP|g" \
+            -e "s|@INSTALL_DIR@|$INSTALL_DIR|g" \
+            -e "s|@VENV_DIR@|$VENV_DIR|g" \
+            -e "s|@CONFIG_DIR@|$CONFIG_DIR|g" \
+            "$SOURCE_DIR/deploy/dfly-$service.service" \
+            > "/etc/systemd/system/dfly-$service.service"
+        chmod 644 "/etc/systemd/system/dfly-$service.service"
+    done
+    cp "$SOURCE_DIR/deploy/dfly-mount-watchdog.service" \
+        /etc/systemd/system/dfly-mount-watchdog.service
+    cp "$SOURCE_DIR/deploy/dfly-mount-watchdog.timer" \
+        /etc/systemd/system/dfly-mount-watchdog.timer
+
+    MOSQUITTO_UNIT_PATH="$(systemctl show -p FragmentPath --value mosquitto.service)"
+    if [ -z "$MOSQUITTO_UNIT_PATH" ] || [ ! -f "$MOSQUITTO_UNIT_PATH" ]; then
+        echo "Error: Mosquitto systemd unit was not found." >&2
+        exit 1
+    fi
+    ln -sfn "$MOSQUITTO_UNIT_PATH" /etc/systemd/system/dfly-mqtt.service
+    rm -f /etc/systemd/system/dragonfly-capture.service \
+        /etc/systemd/system/dragonfly-portal.service \
+        /etc/systemd/system/dragonfly-mount-watchdog.service \
+        /etc/systemd/system/dragonfly-mount-watchdog.timer
 
     systemctl daemon-reload
-    systemctl enable dragonfly-capture dragonfly-portal dragonfly-mount-watchdog.timer
-    systemctl restart dragonfly-capture dragonfly-portal
-    systemctl restart dragonfly-mount-watchdog.timer
+    systemctl enable mosquitto.service
+    systemctl start mosquitto.service
+    systemctl enable \
+        dfly-capture dfly-watchdog dfly-detect dfly-devices dfly-dashboard \
+        dfly-mount-watchdog.timer
+    systemctl restart \
+        dfly-capture dfly-detect dfly-devices dfly-dashboard dfly-watchdog
+    systemctl restart dfly-mount-watchdog.timer
 
     echo ""
     echo "========================================="
     echo "   Dragonfly Installation Complete!      "
     echo "========================================="
     echo "Status:"
-    systemctl --no-pager status dragonfly-capture dragonfly-portal dragonfly-mount-watchdog.timer || true
+    systemctl --no-pager status \
+        dfly-mqtt dfly-capture dfly-watchdog dfly-detect dfly-devices \
+        dfly-dashboard dfly-mount-watchdog.timer || true
 elif [ "$OS" = "Darwin" ]; then
     echo "== Installing macOS LaunchAgents =="
     mkdir -p "$USER_HOME/Library/LaunchAgents"
 
-    # Reclaim ownership if previous runs with sudo left root-owned plists
-    for p in "$USER_HOME/Library/LaunchAgents/com.dragonfly.capture.plist" "$USER_HOME/Library/LaunchAgents/com.dragonfly.portal.plist"; do
-        if [ -f "$p" ] && [ ! -w "$p" ]; then
-            sudo rm -f "$p" 2>/dev/null || rm -f "$p" 2>/dev/null || true
-        fi
+    for old in capture portal; do
+        old_label="com.dragonfly.$old"
+        old_plist="$USER_HOME/Library/LaunchAgents/$old_label.plist"
+        $RUN_AS_USER launchctl unload "$old_plist" 2>/dev/null || true
+        rm -f "$old_plist" 2>/dev/null || sudo rm -f "$old_plist" 2>/dev/null || true
     done
 
     BREW_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -582,16 +624,20 @@ elif [ "$OS" = "Darwin" ]; then
         BREW_PATH="$BREW_BIN:$BREW_PATH"
     fi
 
-    cat <<EOF > "$USER_HOME/Library/LaunchAgents/com.dragonfly.capture.plist"
+    for service in capture watchdog detect devices dashboard; do
+        label="com.dragonfly.dfly-$service"
+        plist="$USER_HOME/Library/LaunchAgents/$label.plist"
+        program="$VENV_DIR/bin/dfly-$service"
+        cat <<EOF > "$plist"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.dragonfly.capture</string>
+    <string>${label}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>${INSTALL_DIR}/venv/bin/dragonfly-capture</string>
+        <string>${program}</string>
     </array>
     <key>WorkingDirectory</key>
     <string>${INSTALL_DIR}</string>
@@ -600,9 +646,9 @@ elif [ "$OS" = "Darwin" ]; then
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>${INSTALL_DIR}/logs/capture.log</string>
+    <string>${INSTALL_DIR}/logs/${service}.log</string>
     <key>StandardErrorPath</key>
-    <string>${INSTALL_DIR}/logs/capture.err.log</string>
+    <string>${INSTALL_DIR}/logs/${service}.err.log</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PYTHONUNBUFFERED</key>
@@ -615,46 +661,15 @@ elif [ "$OS" = "Darwin" ]; then
 </dict>
 </plist>
 EOF
-
-    cat <<EOF > "$USER_HOME/Library/LaunchAgents/com.dragonfly.portal.plist"
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.dragonfly.portal</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>${INSTALL_DIR}/venv/bin/dragonfly-portal</string>
-    </array>
-    <key>WorkingDirectory</key>
-    <string>${INSTALL_DIR}</string>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>${INSTALL_DIR}/logs/portal.log</string>
-    <key>StandardErrorPath</key>
-    <string>${INSTALL_DIR}/logs/portal.err.log</string>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>PYTHONUNBUFFERED</key>
-        <string>1</string>
-        <key>PATH</key>
-        <string>${BREW_PATH}</string>
-        <key>DRAGONFLY_CONFIG</key>
-        <string>${CONFIG_DIR}/dragonfly.yaml</string>
-    </dict>
-</dict>
-</plist>
-EOF
+    done
 
     echo "Loading LaunchAgents..."
-    $RUN_AS_USER launchctl unload "$USER_HOME/Library/LaunchAgents/com.dragonfly.capture.plist" 2>/dev/null || true
-    $RUN_AS_USER launchctl unload "$USER_HOME/Library/LaunchAgents/com.dragonfly.portal.plist" 2>/dev/null || true
-    $RUN_AS_USER launchctl load -w "$USER_HOME/Library/LaunchAgents/com.dragonfly.capture.plist"
-    $RUN_AS_USER launchctl load -w "$USER_HOME/Library/LaunchAgents/com.dragonfly.portal.plist"
+    for service in capture watchdog detect devices dashboard; do
+        label="com.dragonfly.dfly-$service"
+        plist="$USER_HOME/Library/LaunchAgents/$label.plist"
+        $RUN_AS_USER launchctl unload "$plist" 2>/dev/null || true
+        $RUN_AS_USER launchctl load -w "$plist"
+    done
 
     echo ""
     echo "========================================="
@@ -672,7 +687,7 @@ echo "  Restart Service: dragonfly-restart"
 echo "  Update Software: dragonfly-update"
 echo "  Uninstall:       dragonfly-uninstall"
 if [ "$OS" = "Linux" ]; then
-    echo "  View Logs:       journalctl -u dragonfly-capture -u dragonfly-portal -f"
+    echo "  View Logs:       journalctl -u dfly-capture -u dfly-watchdog -u dfly-detect -u dfly-devices -u dfly-dashboard -f"
 else
     echo "  View Logs:       tail -f $INSTALL_DIR/logs/*.log"
 fi

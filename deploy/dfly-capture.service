@@ -1,0 +1,17 @@
+[Unit]
+Description=Dragonfly camera capture and recording
+After=network-online.target dfly-mqtt.service
+Wants=network-online.target dfly-mqtt.service
+
+[Service]
+Type=simple
+User=@SERVICE_USER@
+Group=@SERVICE_GROUP@
+WorkingDirectory=@INSTALL_DIR@
+Environment=PYTHONUNBUFFERED=1
+ExecStart=@VENV_DIR@/bin/dfly-capture
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

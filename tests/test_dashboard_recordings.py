@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 import pytest
 
-from dragonfly.dashboard.app import app
+from dragonfly.services.dfly_dashboard.app import app
 
 
 @pytest.fixture
@@ -18,6 +18,7 @@ def test_browse_and_play_recording(recordings):
     folder = root / "front door" / "2026-11-10"
     folder.mkdir(parents=True)
     (folder / "1.mp4").write_bytes(b"0123456789")
+    (folder / "1.motion.jsonl").write_text('{"ts": 1794355200.5}\n')
     (folder / "notes.txt").write_text("private")
 
     assert 'href="/recordings?path=${encodeURIComponent(m.module_id)}"' in client.get("/").text
@@ -27,7 +28,7 @@ def test_browse_and_play_recording(recordings):
     ]
     assert client.get("/api/recordings", params={"path": "front door/2026-11-10"}).json()[
         "entries"
-    ] == [{"name": "1.mp4", "type": "video"}]
+    ] == [{"name": "1.mp4", "type": "video", "motion_events": [{"ts": 1794355200.5}]}]
 
     response = client.get(
         "/api/recordings/video",
@@ -61,3 +62,17 @@ def test_missing_recordings(recordings, monkeypatch):
     assert client.get("/api/recordings/video", params={"path": "missing.mp4"}).status_code == 404
     monkeypatch.setitem(app.state._state, "recordings_path", None)
     assert client.get("/api/recordings").status_code == 404
+
+
+def test_browsing_prunes_motion_marker_without_its_video(recordings):
+    root, client = recordings
+    folder = root / "OW" / "2026-11-14" / "20"
+    folder.mkdir(parents=True)
+    marker = folder / "1.motion.jsonl"
+    marker.write_text('{"ts": 1}\n')
+
+    response = client.get("/api/recordings", params={"path": "OW/2026-11-14/20"})
+
+    assert response.status_code == 200
+    assert response.json()["entries"] == []
+    assert not marker.exists()

@@ -2,48 +2,54 @@
 # Restart Dragonfly service(s) on Linux (systemd) or macOS (launchd)
 #
 # Usage:
-#   dragonfly-restart [both|capture|portal]
+#   dragonfly-restart [all|capture|watchdog|detect|devices|dashboard|mqtt|mount-watchdog]
 set -euo pipefail
 
-TARGET="${1:-both}"
+TARGET="${1:-all}"
 OS="$(uname -s)"
 
 if [ "$OS" = "Darwin" ]; then
     UID_NUM="$(id -u)"
+    LABELS=()
     case "$TARGET" in
-        both)
-            echo "Restarting Dragonfly services (macOS launchd)..."
-            launchctl kickstart -k "gui/$UID_NUM/com.dragonfly.capture" 2>/dev/null || \
-                (launchctl unload ~/Library/LaunchAgents/com.dragonfly.capture.plist 2>/dev/null; launchctl load -w ~/Library/LaunchAgents/com.dragonfly.capture.plist) || true
-            launchctl kickstart -k "gui/$UID_NUM/com.dragonfly.portal" 2>/dev/null || \
-                (launchctl unload ~/Library/LaunchAgents/com.dragonfly.portal.plist 2>/dev/null; launchctl load -w ~/Library/LaunchAgents/com.dragonfly.portal.plist) || true
+        all|both)
+            brew services restart mosquitto
+            LABELS=(capture watchdog detect devices dashboard)
             ;;
-        capture)
-            echo "Restarting dragonfly-capture (macOS launchd)..."
-            launchctl kickstart -k "gui/$UID_NUM/com.dragonfly.capture" 2>/dev/null || \
-                (launchctl unload ~/Library/LaunchAgents/com.dragonfly.capture.plist 2>/dev/null; launchctl load -w ~/Library/LaunchAgents/com.dragonfly.capture.plist) || true
+        capture|watchdog|detect|devices|dashboard) LABELS=("$TARGET") ;;
+        mqtt)
+            brew services restart mosquitto
+            exit 0
             ;;
-        portal)
-            echo "Restarting dragonfly-portal (macOS launchd)..."
-            launchctl kickstart -k "gui/$UID_NUM/com.dragonfly.portal" 2>/dev/null || \
-                (launchctl unload ~/Library/LaunchAgents/com.dragonfly.portal.plist 2>/dev/null; launchctl load -w ~/Library/LaunchAgents/com.dragonfly.portal.plist) || true
-            ;;
-        *)
-            echo "Usage: dragonfly-restart [both|capture|portal]"
+        mount-watchdog)
+            echo "The mount watchdog timer is Linux-only."
             exit 1
             ;;
+        *) echo "Usage: dragonfly-restart [all|capture|watchdog|detect|devices|dashboard|mqtt|mount-watchdog]"; exit 1 ;;
     esac
+    for service in "${LABELS[@]}"; do
+        label="com.dragonfly.dfly-$service"
+        plist="$HOME/Library/LaunchAgents/$label.plist"
+        launchctl kickstart -k "gui/$UID_NUM/$label" 2>/dev/null || {
+            launchctl unload "$plist" 2>/dev/null || true
+            launchctl load -w "$plist"
+        }
+    done
     echo "Done."
 else
     # Linux (systemd)
+    SERVICES=()
     case "$TARGET" in
-        both) SERVICES="dragonfly-capture dragonfly-portal" ;;
-        capture) SERVICES="dragonfly-capture" ;;
-        portal) SERVICES="dragonfly-portal" ;;
-        *) echo "Usage: dragonfly-restart [both|capture|portal]"; exit 1 ;;
+        all|both)
+            SERVICES=(dfly-mqtt dfly-capture dfly-detect dfly-devices dfly-dashboard dfly-watchdog dfly-mount-watchdog.timer)
+            ;;
+        capture|watchdog|detect|devices|dashboard|mqtt)
+            SERVICES=("dfly-$TARGET")
+            ;;
+        mount-watchdog) SERVICES=(dfly-mount-watchdog.timer) ;;
+        *) echo "Usage: dragonfly-restart [all|capture|watchdog|detect|devices|dashboard|mqtt|mount-watchdog]"; exit 1 ;;
     esac
-    echo "Restarting $SERVICES (Linux systemd)..."
-    sudo systemctl restart $SERVICES
-    sleep 1
-    sudo systemctl --no-pager status $SERVICES || true
+    echo "Restarting ${SERVICES[*]} (Linux systemd)..."
+    sudo systemctl restart "${SERVICES[@]}"
+    sudo systemctl --no-pager status "${SERVICES[@]}" || true
 fi

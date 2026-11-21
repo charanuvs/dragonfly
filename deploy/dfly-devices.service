@@ -1,0 +1,17 @@
+[Unit]
+Description=Dragonfly Kasa and camera device automation
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@SERVICE_USER@
+Group=@SERVICE_GROUP@
+WorkingDirectory=@INSTALL_DIR@
+Environment=PYTHONUNBUFFERED=1
+ExecStart=@VENV_DIR@/bin/dfly-devices
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

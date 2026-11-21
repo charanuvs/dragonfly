@@ -1,6 +1,6 @@
 import asyncio
 
-from dragonfly.hub.reolink_camera import IR_MODES, ReolinkIrController
+from dragonfly.services.dfly_devices.reolink_camera import IR_MODES, ReolinkIrController
 
 
 def test_ir_modes_cycle_between_camera_supported_values(monkeypatch):
@@ -25,7 +25,7 @@ def test_ir_modes_cycle_between_camera_supported_values(monkeypatch):
         async def logout(self):
             pass
 
-    monkeypatch.setattr("dragonfly.hub.reolink_camera.Host", FakeHost)
+    monkeypatch.setattr("dragonfly.services.dfly_devices.reolink_camera.Host", FakeHost)
     controller = ReolinkIrController("rtsp://admin:secret@camera.local:554/main")
 
     async def exercise():
@@ -66,7 +66,7 @@ def test_ir_controller_rejects_unreported_modes(monkeypatch):
         async def get_state(self, command, ch):
             pass
 
-    monkeypatch.setattr("dragonfly.hub.reolink_camera.Host", FakeHost)
+    monkeypatch.setattr("dragonfly.services.dfly_devices.reolink_camera.Host", FakeHost)
     controller = ReolinkIrController("rtsp://admin:secret@camera.local:554/main")
 
     try:

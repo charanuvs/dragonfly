@@ -33,7 +33,8 @@ The installer takes care of everything:
 Once installed:
 - **Web Dashboard**: `http://localhost:8000` (or `http://<hub-ip>:8000`)
 - **Config**: `/etc/dragonfly/dragonfly.yaml` (Linux) or `~/.config/dragonfly/dragonfly.yaml` (macOS)
-- **Restart**: `dragonfly-restart`
+- **Services**: `dfly-capture`, `dfly-watchdog`, `dfly-detect`, `dfly-devices`, `dfly-dashboard`, and `dfly-mqtt` (Mosquitto)
+- **Restart**: `dragonfly-restart all` or `dragonfly-restart dashboard`
 - **Update**: `dragonfly-update`
 - **Uninstall**: `dragonfly-uninstall`
 
@@ -56,12 +57,12 @@ cameras:
 
 Apply changes by restarting the services:
 ```bash
-dragonfly-restart
+dragonfly-restart all
 ```
 
 ---
 
-## Phone Alerts (Optional)
+## Alerts (Optional)
 
 See [alert setup](docs/alerts.md) to receive watchdog notifications through ntfy.
 

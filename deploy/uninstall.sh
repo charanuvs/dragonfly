@@ -36,10 +36,15 @@ if [ "$OS" = "Darwin" ]; then
     esac
 
     echo "== Stopping and unloading LaunchAgents =="
-    launchctl unload "$USER_HOME/Library/LaunchAgents/com.dragonfly.capture.plist" 2>/dev/null || true
-    launchctl unload "$USER_HOME/Library/LaunchAgents/com.dragonfly.portal.plist" 2>/dev/null || true
-    rm -f "$USER_HOME/Library/LaunchAgents/com.dragonfly.capture.plist"
-    rm -f "$USER_HOME/Library/LaunchAgents/com.dragonfly.portal.plist"
+    for service in capture watchdog detect devices dashboard; do
+        label="com.dragonfly.dfly-$service"
+        launchctl unload "$USER_HOME/Library/LaunchAgents/$label.plist" 2>/dev/null || true
+        rm -f "$USER_HOME/Library/LaunchAgents/$label.plist"
+    done
+    for old in capture portal; do
+        launchctl unload "$USER_HOME/Library/LaunchAgents/com.dragonfly.$old.plist" 2>/dev/null || true
+        rm -f "$USER_HOME/Library/LaunchAgents/com.dragonfly.$old.plist"
+    done
 
     echo "== Removing CLI helpers =="
     rm -f /usr/local/bin/dragonfly-restart /usr/local/bin/dragonfly-update /usr/local/bin/dragonfly-uninstall /usr/local/bin/dragonfly-setup-storage 2>/dev/null || \
@@ -94,14 +99,30 @@ case "$confirm" in
 esac
 
 echo "== Stopping and disabling services =="
-systemctl stop dragonfly-capture dragonfly-portal dragonfly-mount-watchdog.timer dragonfly-mount-watchdog.service 2>/dev/null || true
-systemctl disable dragonfly-capture dragonfly-portal dragonfly-mount-watchdog.timer dragonfly-mount-watchdog.service 2>/dev/null || true
+systemctl stop \
+    dfly-capture dfly-watchdog dfly-detect dfly-devices dfly-dashboard \
+    dfly-mount-watchdog.timer dfly-mount-watchdog.service \
+    dragonfly-capture dragonfly-portal dragonfly-mount-watchdog.timer dragonfly-mount-watchdog.service \
+    2>/dev/null || true
+systemctl disable \
+    dfly-capture dfly-watchdog dfly-detect dfly-devices dfly-dashboard \
+    dfly-mount-watchdog.timer dfly-mount-watchdog.service \
+    dragonfly-capture dragonfly-portal dragonfly-mount-watchdog.timer dragonfly-mount-watchdog.service \
+    2>/dev/null || true
 
 echo "== Removing systemd units =="
-rm -f /etc/systemd/system/dragonfly-capture.service
-rm -f /etc/systemd/system/dragonfly-portal.service
-rm -f /etc/systemd/system/dragonfly-mount-watchdog.service
-rm -f /etc/systemd/system/dragonfly-mount-watchdog.timer
+rm -f /etc/systemd/system/dfly-capture.service \
+    /etc/systemd/system/dfly-watchdog.service \
+    /etc/systemd/system/dfly-detect.service \
+    /etc/systemd/system/dfly-devices.service \
+    /etc/systemd/system/dfly-dashboard.service \
+    /etc/systemd/system/dfly-mqtt.service \
+    /etc/systemd/system/dfly-mount-watchdog.service \
+    /etc/systemd/system/dfly-mount-watchdog.timer \
+    /etc/systemd/system/dragonfly-capture.service \
+    /etc/systemd/system/dragonfly-portal.service \
+    /etc/systemd/system/dragonfly-mount-watchdog.service \
+    /etc/systemd/system/dragonfly-mount-watchdog.timer
 systemctl daemon-reload
 
 echo "== Removing sudoers rule and helpers =="

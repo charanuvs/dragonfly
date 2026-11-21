@@ -1,4 +1,4 @@
-from dragonfly.hub.registry import DeviceRegistry
+from dragonfly.common.registry import DeviceRegistry
 
 
 def test_registry_touch_and_get():

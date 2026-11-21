@@ -32,6 +32,18 @@ completed MP4 segments in the browser. A segment still being recorded may not
 play until it finishes. Recordings share the portal's network access: anyone
 who can reach the portal can view them.
 
+### Motion alerts and timestamps
+
+For a supported Reolink camera, set `motion_events: true` on its camera entry
+after enabling motion detection in the camera settings. The portal polls the
+camera's motion state once per second; it does not analyze or decode video.
+Each motion-start transition queues an ntfy alert when `DRAGONFLY_NTFY_URL` is
+configured and appends its Unix timestamp to a `<segment>.motion.jsonl` file
+beside the matching MP4. **Browse recordings** shows those timestamps on the
+corresponding clip. The event file stays with the clip's date folder, and
+orphaned markers are pruned when that folder is browsed after its video has
+been removed by retention cleanup.
+
 Live view remuxes the camera's video stream without re-encoding and, when the
 stream provides audio, transcodes that track to AAC at 64 kbps for HLS playback.
 The live pipeline does not require the camera to have an audio track.
@@ -215,7 +227,7 @@ node it came back as.
 
 It gets invoked from two places, deliberately:
 
-- **The watchdog** (`watchdog/monitor.py`), whenever its storage check comes
+- **`dfly-watchdog`** (`services/dfly_watchdog/monitor.py`), whenever its storage check comes
   back unmounted or unreadable. This is the main path — the same component
   that reports storage health also fixes it, and re-checks immediately after
   so the dashboard shows the repaired state rather than looking broken for
@@ -225,12 +237,10 @@ It gets invoked from two places, deliberately:
   a merely **full** disk: that's mounted and readable, so unmounting it
   would be actively harmful, and the recorder's watermark cleanup is what
   handles that case.
-- **`dragonfly-mount-watchdog.timer`**, every 30s, as a backstop for when
-  portal isn't running — the watchdog lives inside portal, so it can't
-  repair anything while portal is down (e.g. a reboot where the drive
-  reappears before portal starts).
+- **`dfly-mount-watchdog.timer`**, every 30s, as a backstop if the watchdog
+  service is unavailable (for example during boot).
 
-The watchdog runs unprivileged (inside portal, as the service user) but
+The watchdog runs unprivileged as its own service, but
 `umount`/`mount` need root, so the installer sets up the script
 **root-owned at `/usr/local/sbin/dragonfly-mount-repair`** with a
 `/etc/sudoers.d` rule scoped to exactly that one command. Installing it
@@ -243,16 +253,15 @@ repaired, then recording resumes at the next scheduled segment — with no
 manual `umount`/`mount` and no service restart. Check on it with:
 
 ```bash
-journalctl -u dragonfly-portal -n 30    # watchdog checks + repair attempts
-systemctl list-timers dragonfly-mount-watchdog.timer
-journalctl -u dragonfly-mount-watchdog -n 20
+journalctl -u dfly-watchdog -n 30    # health checks + repair attempts
+systemctl list-timers dfly-mount-watchdog.timer
+journalctl -u dfly-mount-watchdog.service -n 20
 ```
 
 **What happens on the capture side if the drive is unplugged:**
-`dragonfly-capture.service` has *no* systemd-level dependency on the mount
-at all — not `RequiresMountsFor`, not `BindsTo`, nothing (just an `After=`
-ordering hint so it starts after the mount unit at boot, best-effort, not
-required). Two earlier attempts got this wrong, in the same way each time:
+`dfly-capture.service` has *no* systemd-level dependency on the mount at all —
+not `RequiresMountsFor`, not `BindsTo`, not even an `After=` ordering hint.
+Two earlier attempts got this wrong, in the same way each time:
 
 1. `BindsTo=mnt-dragonfly\x2dhdd.mount` tore the whole service down when the
    drive was unplugged, taking heartbeat/live view down as collateral

@@ -27,13 +27,14 @@ kasa_switch:
   timezone: America/Los_Angeles
   gpio_pin: 17
 
-# Health monitoring, run by the portal process (not capture — a component
-# can't report its own death). Checks camera reachability, storage health,
-# whether recordings are actually landing on disk, and whether the capture
-# process is up. See docs/architecture.md.
+# Health monitoring runs independently from the services it checks.
 watchdog:
   interval_s: 15
-  capture_service: dragonfly-capture
+  capture_service: dfly-capture
+  detection_service: dfly-detect
+  device_service: dfly-devices
+  dashboard_service: dfly-dashboard
+  mqtt_service: dfly-mqtt
   storage_full_pct: 95        # storage counts as unhealthy at/above this
   recording_grace_s: 60       # slack past a segment's length before
                               # recording is judged stopped
@@ -54,6 +55,7 @@ cameras: []
 #     name: "Front Door"
 #     rtsp_url: "rtsp://admin:password@192.168.1.50:554/stream1"
 #     ir_control: true  # Reolink camera IR modes (Auto/Off) in the dashboard
+#     motion_events: true  # AI human alerts and generic motion recording timestamps
 #     recording_rtsp_url: "rtsp://admin:password@192.168.1.50:554/stream2"
 #     poll_interval_s: 15
 #     timeout_s: 3

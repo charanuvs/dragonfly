@@ -1,0 +1,1 @@
+"""Camera event detection and notification service."""

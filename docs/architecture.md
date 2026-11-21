@@ -1,199 +1,63 @@
 # Architecture
 
-## Overview
+Dragonfly runs as independent services on the hub. Each service has one job and communicates through MQTT, a loopback-only HTTP API, shared recording files, or ntfy as described below. Services do not share in-process state.
 
-Dragonfly is a hub-and-spoke system. A dedicated Linux machine (mini-PC, home server,
-or single-board computer) acts as the hub: it is the only device that maintains full state,
-the only device that writes to persistent storage, and the only device with any path to the internet.
-Everything else — cameras, environmental sensors, door/window sensors, whatever gets added later
-— is a spoke that only talks to the hub.
+```mermaid
+flowchart LR
+  MQTT["dfly-mqtt\nMosquitto broker"]
+  CAP["dfly-capture\nrecording, cleanup, live ffmpeg"]
+  WD["dfly-watchdog\nhost and service health"]
+  DET["dfly-detect\nReolink AI and motion markers"]
+  DEV["dfly-devices\nKasa, GPIO, camera controls"]
+  UI["dfly-dashboard\nUI and HTTP façade"]
+  HEALTH["ntfy health topic"]
+  PEOPLE["ntfy person topic"]
+  OW["Reolink cameras"]
+  STORE["Recording storage"]
+  BROWSER["Browser"]
 
-On the hub host itself, the hub is split into **two independent processes** —
-capture and portal — coordinating only over MQTT, not by sharing memory:
-
+  CAP <--> MQTT
+  WD --> MQTT
+  UI <--> MQTT
+  CAP --> OW
+  WD --> OW
+  DET --> OW
+  CAP --> STORE
+  DET --> STORE
+  UI -->|"127.0.0.1:8001"| DEV
+  WD --> HEALTH
+  DET --> PEOPLE
+  BROWSER <--> UI
 ```
-                    ┌───────────────────────────────────────┐
-                    │            Hub Host (Linux)           │
-                    │                                           │
-   isolated  ───────┤  MQTT broker (Mosquitto)                  │
-   sensor    ◄──────┤  ┌──────────────┐      ┌────────────────┐│
-   network          │  │   capture     │◄────►│     portal      ││
-   (no internet)     │  │  (recorder,   │ MQTT │  (dashboard +   ││──►  home LAN
-                    │  │  live ffmpeg) │      │   watchdog)     ││     (internet,
-                    │  │               │◄─────┤  watches capture ││      your Mac, phone)
-                    │  └──────────────┘ check └────────────────┘│
-                    │  external storage (recordings)            │
-                    └───────────────────────────────────────┘
-```
 
-Why split it this way: early on, both lived in one process, and every
-dashboard tweak meant a `systemctl restart` that also killed whatever
-recording was mid-flight. Splitting them means restarting the dashboard
-after a UI change never interrupts a recording or a live stream, and vice
-versa — the two genuinely have different release cadences (the dashboard
-changes constantly during development; capture should barely ever need to
-restart once it's working).
+## Services
 
-## Components
+- **`dfly-mqtt`** is a systemd alias to the package-managed Mosquitto service. It is the broker, not a second Dragonfly broker implementation.
+- **`dfly-capture`** owns camera recording, segment cleanup, and on-demand live-stream ffmpeg. It publishes recording and heartbeat events over MQTT.
+- **`dfly-watchdog`** independently checks camera reachability, storage, recording freshness, and the other service units. It publishes retained health state and its own heartbeat over MQTT, and sends Pi-health alerts. The dashboard marks the watchdog offline when its heartbeat becomes stale.
+- **`dfly-detect`** polls camera events. Generic motion writes recording markers; Reolink AI people detections publish to the person ntfy topic.
+- **`dfly-devices`** owns Kasa control, the scheduled shutoff, the GPIO button, and Reolink IR control. Its HTTP API binds only to `127.0.0.1:8001`.
+- **`dfly-dashboard`** serves the UI, builds its registry from MQTT, serves capture's live HLS files, and proxies device actions to the loopback device API. It does not own watchdog, detection, or automation background loops.
 
-### Shared code (`src/dragonfly/hub/`)
+The `dfly-mount-watchdog.timer` is a small systemd timer for repairing an unavailable recordings mount; it is an operational helper rather than another Dragonfly application service.
 
-Used by both processes, contains no process-specific logic itself.
+## Code Layout
 
-- **`config.py`** — loads `config/dragonfly.yaml` (per-deployment, not committed
-  to git; see `config/dragonfly.example.yaml` for the template).
-- **`registry.py`** — tracks every known module (camera, sensor): its id,
-  type, last-seen time, and current status. Each process that needs a view
-  of "what devices exist and are they alive" builds its own instance from
-  the MQTT stream — there's no single shared registry object anymore, since
-  there's no single process to own it.
-- **`eventbus.py`** — thin wrapper around an MQTT broker running on the hub
-  host itself (Mosquitto). Modules publish readings/events to topics like
-  `dragonfly/<module_id>/state`; anyone who cares subscribes. MQTT is used
-  because it works over the isolated network with no internet dependency,
-  is trivial to implement on constrained devices (ESP32, microcontrollers, etc.), and
-  — critically for the two-process split — decouples publishers from
-  subscribers entirely, which is exactly what capture/portal needed.
-- **`sysinfo.py`** — CPU/mem/disk stats, used only by portal (self-contained,
-  no capture dependency).
+- `src/dragonfly/common/` contains configuration, MQTT client, registry, alerts, RTSP parsing, system information, recording-path helpers, and shared constants.
+- `src/dragonfly/services/dfly_capture/` contains capture, recorder, and live-stream implementation.
+- `src/dragonfly/services/dfly_watchdog/` contains health checks and the watchdog runner.
+- `src/dragonfly/services/dfly_detect/` contains camera event polling and detection runner.
+- `src/dragonfly/services/dfly_devices/` contains device controllers, local API, and runner.
+- `src/dragonfly/services/dfly_dashboard/` contains the dashboard app and runner.
 
-### Capture process (`hub/capture_main.py`, console script `dragonfly-capture`)
+The underscores in Python package folder names correspond to the hyphens used in systemd service names.
 
-Does the work of talking to cameras: the recorders and the live-view ffmpeg
-manager (below). Publishes recording events to MQTT; has no HTTP server and
-no direct knowledge of the dashboard. Run under systemd as
-`dragonfly-capture.service`.
+## Data Boundaries
 
-Capture deliberately monitors **nothing**, including itself — all health
-checking belongs to the watchdog (below), which runs in the portal process.
-A component reporting its own health can't report having died: capture's
-earlier self-heartbeat simply went silent when capture crashed, leaving the
-dashboard to infer the problem from staleness. Checking from outside is both
-simpler and more truthful.
+MQTT topics use the `dragonfly/<module-id>/<event>` prefix. Capture and watchdog publish retained status; the dashboard subscribes and builds its own in-memory registry. The broker replays retained state when the dashboard reconnects.
 
-### Watchdog (`src/dragonfly/watchdog/`)
+The device API is strictly loopback-only. Browsers call the dashboard, which proxies switch and camera-control routes to `dfly-devices`; the device API is never exposed on the LAN or tailnet.
 
-Runs as a background thread in the portal process. Four checks, all
-external observations rather than self-reports:
+Capture writes live HLS output under `/tmp/dragonfly-live`. The dashboard serves those files, while MQTT carries live-start requests. Recordings and motion-marker sidecars stay on configured recording storage.
 
-1. **Camera reachable** — TCP connect to the RTSP port.
-2. **Storage healthy** — mounted, readable (`os.statvfs`, which fails with
-   EIO on a mount whose drive was yanked, the case where `os.path.ismount()`
-   still says True), and not full.
-3. **Recording actually happening** — verified by finding the newest `.mp4`
-   on disk and checking it's been written to recently. Notably this does not
-   trust a "segment started" event; the recorder saying it started writing
-   isn't proof bytes landed.
-4. **Capture process up** — `systemctl is-active dragonfly-capture`, which
-   stays correct even if capture is hard-killed or never started.
-
-Results go into portal's `DeviceRegistry` (so the dashboard renders them
-like any other module, including two pseudo-modules `_capture` and
-`_storage`) and are published retained over MQTT for anything else that
-cares. Intervals and thresholds are configurable under `watchdog:` in
-`config/dragonfly.yaml`.
-
-### Portal process (`hub/portal_main.py`, console script `dragonfly-portal`)
-
-Serves the web dashboard (FastAPI/uvicorn). Has no direct reference to any
-capture-side object — it builds its own `DeviceRegistry` by independently
-subscribing to the same `dragonfly/#` MQTT topics capture publishes to, and
-for live view, publishes a request over MQTT and then reads the resulting
-files straight off disk from a well-known shared directory (rather than
-holding any reference to capture's `LiveStreamManager`). Run under systemd
-as `dragonfly-portal.service`.
-
-### Modules (`src/dragonfly/modules/`)
-
-Everything that isn't the hub. All modules implement the same interface
-(`modules/base.py: SensorModule`) so the hub doesn't need special-case code
-per device type: `module_id`, `module_type`, `start()`, `stop()`, and a
-callback that publishes readings onto the event bus.
-
-- **`modules/camera/`** — camera modules. The Outdoor West (`OW`) camera is
-  RTSP/ONVIF.
-  Recording is an opt-in (`record: true`) module, **`recorder.py`**: an
-  ffmpeg-based segmented recorder with gapless cutover and storage-watermark
-  cleanup — see [`recording.md`](recording.md) for the full design and the
-  storage math behind its defaults. **`rtsp_camera.py`** holds the
-  reachability check (`parse_rtsp_target`, a plain TCP connect to the RTSP
-  port); the watchdog is what calls it now, on `watchdog.interval_s`.
-- Future sensor types are added as new subpackages under `modules/`, each a
-  small driver that reads hardware and calls `publish()`.
-
-Physical topology for modules is flexible: a sensor can be a peripheral connected
-directly to the hub host (e.g. USB/serial), or a separate small device
-(ESP32, microcontroller node) on the isolated network that speaks MQTT to the hub. Either
-way it looks the same to the hub service.
-
-### Dashboard (`src/dragonfly/dashboard/`)
-
-A FastAPI app serving a status page (heartbeat/online-offline per module
-today; live views — camera snapshots/streams, sensor readings, recording
-history — as those modules are built out). Binds only to the hub host's
-LAN-reachable interface — never to the isolated sensor interface, never to a
-tailscale/public interface without deliberately deciding to do so later.
-
-`hub/portal_main.py` runs the dashboard (uvicorn, alongside its own MQTT
-event loop and the watchdog thread) in a process separate from capture. The
-dashboard's `/api/modules` endpoint reads `app.state.registry`, but that
-registry is portal's own — populated by the watchdog's checks plus capture's
-MQTT events — not a shared object with capture. There is no direct IPC
-between the two processes at all, only MQTT plus the shared live-view
-directory described next.
-
-Each module's card also renders a free-form `details` dict — whatever the
-check that produced it found worth reporting (disk usage, systemd state,
-newest segment and its age, last error). That keeps the UI generic: a new
-check can surface useful facts without the dashboard needing to know
-anything about it.
-
-Note the division of labour on recording status: the watchdog owns
-`recording_active`, judged from files on disk, while capture's own MQTT
-events contribute only the *reason* something failed (`not_mounted`,
-`write_failed`, `segment_failed`), shown as "capture says". Capture
-announcing that it started a segment is not evidence that bytes were
-written — keeping the claim and the verification separate is the point.
-
-**Live view** (`dashboard/live.py`, `/live/<camera-id>`) is a third, separate
-way capture touches a camera besides the heartbeat and the recorder: an
-on-demand `ffmpeg` process remuxes (not re-encodes — `-c:v copy`, cheap on
-CPU) the camera's main/HD stream into short HLS segments. Since capture owns
-this process and portal serves the HTTP request, the two coordinate over
-MQTT: portal publishes a `live_start_request` event on each segment/playlist
-fetch (which doubles as the "still watching" keep-alive), capture's
-`LiveStreamManager` starts/keeps the ffmpeg process running and writes HLS
-segments to a well-known shared directory (`/tmp/dragonfly-live/<camera-id>`
-by default), and portal reads the resulting files straight off disk to serve
-to the browser via `hls.js`. It auto-stops after ~60s with no requests,
-because unlike the always-on heartbeat/recorder, a third concurrent
-connection to the camera is the one most likely to bump into a cheap
-camera's connection limit — see the caveat in `docs/recording.md`/README if
-live view and a recording cutover overlap and one fails.
-
-### Storage
-
-The external storage is mounted on the hub host and holds:
-
-- Recorded video (`recordings/<module_id>/<date>/...`)
-- A local database (SQLite to start) for sensor readings/events and the
-  device registry's persistent state
-
-## Data flow
-
-1. A module reads its hardware and publishes a message to the MQTT broker.
-2. The hub's event bus receives it, updates the registry, and hands it to
-   whichever subsystem cares (recorder for camera frames, a time-series
-   logger for sensor readings).
-3. The dashboard reads current state from the registry/database and renders
-   it; it does not talk to modules directly.
-
-## Why this shape
-
-- Adding a new sensor type never requires touching the hub's core code —
-  just a new module implementing the same small interface.
-- The hub is the only thing that needs to be reliable and reachable; modules
-  can be as cheap/flaky as necessary.
-- MQTT plus a local broker means the whole thing works with zero internet
-  dependency, which matches the network isolation goal in
-  [`network.md`](network.md).
+Health and camera-person notifications use different ntfy topics and separate alert managers. Neither ntfy topic is used as service-to-service transport.

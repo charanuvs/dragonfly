@@ -1,0 +1,1 @@
+"""Local device control and automation service."""

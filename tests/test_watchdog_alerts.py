@@ -4,10 +4,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from dragonfly.hub.config import CameraConfig, HubConfig, StorageConfig
-from dragonfly.hub.registry import DeviceRegistry
-from dragonfly.watchdog.alerts import AlertManager, Ntfy, main
-from dragonfly.watchdog.monitor import Watchdog
+from dragonfly.common.alerts import AlertManager, Ntfy, main
+from dragonfly.common.config import CameraConfig, HubConfig, StorageConfig
+from dragonfly.common.registry import DeviceRegistry
+from dragonfly.services.dfly_watchdog.monitor import Watchdog
 
 
 def test_ntfy_is_disabled_without_configuration(monkeypatch):
@@ -19,11 +19,26 @@ def test_ntfy_is_disabled_without_configuration(monkeypatch):
         Ntfy.from_environment()
 
 
+def test_person_ntfy_uses_a_separate_topic_and_token(monkeypatch):
+    monkeypatch.setenv("DRAGONFLY_NTFY_URL", "https://ntfy.sh/health-topic")
+    monkeypatch.setenv("DRAGONFLY_NTFY_TOKEN", "health-token")
+    monkeypatch.setenv("DRAGONFLY_NTFY_PERSON_URL", "https://ntfy.sh/person-topic")
+    monkeypatch.setenv("DRAGONFLY_NTFY_PERSON_TOKEN", "person-token")
+
+    health = Ntfy.from_environment()
+    person = Ntfy.from_environment("DRAGONFLY_NTFY_PERSON")
+
+    assert health.url == "https://ntfy.sh/health-topic"
+    assert health.token == "health-token"
+    assert person.url == "https://ntfy.sh/person-topic"
+    assert person.token == "person-token"
+
+
 def test_ntfy_sends_authenticated_request():
     sender = Ntfy("https://ntfy.sh/example-topic", "secret")
     response = MagicMock()
     response.__enter__.return_value.status = 201
-    with patch("dragonfly.watchdog.alerts.urlopen", return_value=response) as urlopen:
+    with patch("dragonfly.common.alerts.urlopen", return_value=response) as urlopen:
         sender.send("Dragonfly: camera offline")
     request = urlopen.call_args.args[0]
     assert request.full_url == "https://ntfy.sh/example-topic"
@@ -42,7 +57,7 @@ def test_ntfy_rejects_unsafe_urls(url):
 def test_alerts_debounce_retry_and_reset():
     sender = MagicMock()
     alerts = AlertManager(sender, delay_s=30, retry_s=60)
-    with patch("dragonfly.watchdog.alerts.time.monotonic") as clock:
+    with patch("dragonfly.common.alerts.time.monotonic") as clock:
         clock.return_value = 100
         alerts.observe("camera:OW", True, "camera offline")
         alerts._process()
@@ -65,6 +80,27 @@ def test_alerts_debounce_retry_and_reset():
         assert sender.send.call_count == 3
 
 
+def test_event_notification_queue_retries_delivery():
+    sender = MagicMock()
+    sender.send.side_effect = [OSError(), None]
+    alerts = AlertManager(sender, retry_s=5)
+    alerts.notify("Motion detected: Outdoor West")
+
+    with patch("dragonfly.common.alerts.time.monotonic") as clock:
+        clock.return_value = 10
+        alerts._process()
+        assert sender.send.call_count == 1
+        clock.return_value = 14
+        alerts._process()
+        assert sender.send.call_count == 1
+        clock.return_value = 15
+        alerts._process()
+
+    assert sender.send.call_count == 2
+    sender.send.assert_called_with("Motion detected: Outdoor West")
+    assert alerts._notifications == []
+
+
 def test_watchdog_observes_each_failure(tmp_path):
     config = HubConfig(
         storage=StorageConfig(recordings_path=str(tmp_path), mount_point=None),
@@ -72,15 +108,17 @@ def test_watchdog_observes_each_failure(tmp_path):
     )
     alerts = MagicMock()
     watchdog = Watchdog(config, DeviceRegistry(), alerts=alerts)
-    with patch("dragonfly.watchdog.monitor.check_service", return_value={"online": False}), \
-         patch("dragonfly.watchdog.monitor.check_storage", return_value={"online": True, "healthy": True}), \
-         patch("dragonfly.watchdog.monitor.check_camera", return_value={"online": False}), \
-         patch("dragonfly.watchdog.monitor.check_recording", return_value={"active": False}):
+    with patch("dragonfly.services.dfly_watchdog.monitor.check_service", return_value={"online": False}), \
+         patch("dragonfly.services.dfly_watchdog.monitor.check_storage", return_value={"online": True, "healthy": True}), \
+         patch("dragonfly.services.dfly_watchdog.monitor.check_camera", return_value={"online": False}), \
+         patch("dragonfly.services.dfly_watchdog.monitor.check_recording", return_value={"active": False}):
         watchdog.run_once()
     observations = {call.args[0]: call.args[1] for call in alerts.observe.call_args_list
                     if call.args[0] not in ("cpu", "memory")}
     assert observations == {
         "capture": True, "storage": False, "recording:OW": True, "camera:OW": True,
+        "service:dfly-detect": True, "service:dfly-devices": True,
+        "service:dfly-dashboard": True, "service:dfly-mqtt": True,
     }
 
 
@@ -92,21 +130,23 @@ def test_storage_failure_is_reported_without_redundant_recording_failure(tmp_pat
     config.watchdog.repair_storage = False
     alerts = MagicMock()
     watchdog = Watchdog(config, DeviceRegistry(), alerts=alerts)
-    with patch("dragonfly.watchdog.monitor.check_service", return_value={"online": True}), \
-         patch("dragonfly.watchdog.monitor.check_storage", return_value={"online": False, "healthy": False}), \
-         patch("dragonfly.watchdog.monitor.check_camera", return_value={"online": True}):
+    with patch("dragonfly.services.dfly_watchdog.monitor.check_service", return_value={"online": True}), \
+         patch("dragonfly.services.dfly_watchdog.monitor.check_storage", return_value={"online": False, "healthy": False}), \
+         patch("dragonfly.services.dfly_watchdog.monitor.check_camera", return_value={"online": True}):
         watchdog.run_once()
     observations = {call.args[0]: call.args[1] for call in alerts.observe.call_args_list
                     if call.args[0] not in ("cpu", "memory")}
     assert observations == {
         "capture": False, "storage": True, "recording:OW": False, "camera:OW": False,
+        "service:dfly-detect": False, "service:dfly-devices": False,
+        "service:dfly-dashboard": False, "service:dfly-mqtt": False,
     }
 
 
 def test_short_failure_does_not_send():
     sender = MagicMock()
     alerts = AlertManager(sender, delay_s=30)
-    with patch("dragonfly.watchdog.alerts.time.monotonic") as clock:
+    with patch("dragonfly.common.alerts.time.monotonic") as clock:
         clock.return_value = 100
         alerts.observe("storage", True, "storage offline")
         clock.return_value = 120
@@ -146,9 +186,9 @@ def test_sustained_cpu_and_memory_alerts_are_independent():
     sender = MagicMock()
     alerts = AlertManager(sender)
     watchdog = Watchdog(HubConfig(), DeviceRegistry(), alerts=alerts)
-    with patch("dragonfly.watchdog.monitor.time.monotonic") as clock, \
-         patch("dragonfly.watchdog.monitor.psutil.cpu_percent", return_value=90.0) as cpu, \
-         patch("dragonfly.watchdog.monitor.psutil.virtual_memory") as memory:
+    with patch("dragonfly.services.dfly_watchdog.monitor.time.monotonic") as clock, \
+         patch("dragonfly.services.dfly_watchdog.monitor.psutil.cpu_percent", return_value=90.0) as cpu, \
+         patch("dragonfly.services.dfly_watchdog.monitor.psutil.virtual_memory") as memory:
         memory.return_value = SimpleNamespace(percent=89.9)
         for instant in (0, 15, 30, 45, 59):
             clock.return_value = instant
@@ -177,9 +217,9 @@ def test_usage_dips_and_sampling_gaps_reset_the_timer():
     sender = MagicMock()
     alerts = AlertManager(sender)
     watchdog = Watchdog(HubConfig(), DeviceRegistry(), alerts=alerts)
-    with patch("dragonfly.watchdog.monitor.time.monotonic") as clock, \
-         patch("dragonfly.watchdog.monitor.psutil.cpu_percent") as cpu, \
-         patch("dragonfly.watchdog.monitor.psutil.virtual_memory", return_value=SimpleNamespace(percent=20)):
+    with patch("dragonfly.services.dfly_watchdog.monitor.time.monotonic") as clock, \
+         patch("dragonfly.services.dfly_watchdog.monitor.psutil.cpu_percent") as cpu, \
+         patch("dragonfly.services.dfly_watchdog.monitor.psutil.virtual_memory", return_value=SimpleNamespace(percent=20)):
         for instant, percent in ((0, 100), (15, 100), (30, 89.9), (45, 100), (90, 100), (105, 100), (120, 100), (135, 100)):
             clock.return_value = instant
             cpu.return_value = percent
@@ -196,9 +236,9 @@ def test_usage_sampling_error_resets_only_the_failed_metric():
     sender = MagicMock()
     alerts = AlertManager(sender)
     watchdog = Watchdog(HubConfig(), DeviceRegistry(), alerts=alerts)
-    with patch("dragonfly.watchdog.monitor.time.monotonic") as clock, \
-         patch("dragonfly.watchdog.monitor.psutil.cpu_percent") as cpu, \
-         patch("dragonfly.watchdog.monitor.psutil.virtual_memory", return_value=SimpleNamespace(percent=90)):
+    with patch("dragonfly.services.dfly_watchdog.monitor.time.monotonic") as clock, \
+         patch("dragonfly.services.dfly_watchdog.monitor.psutil.cpu_percent") as cpu, \
+         patch("dragonfly.services.dfly_watchdog.monitor.psutil.virtual_memory", return_value=SimpleNamespace(percent=90)):
         for instant in (0, 15, 30, 45, 60):
             clock.return_value = instant
             cpu.side_effect = OSError() if instant == 30 else None

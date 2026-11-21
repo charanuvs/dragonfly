@@ -1,0 +1,17 @@
+[Unit]
+Description=Dragonfly dashboard UI
+After=network-online.target dfly-mqtt.service tailscaled.service
+Wants=network-online.target dfly-mqtt.service tailscaled.service
+
+[Service]
+Type=simple
+User=@SERVICE_USER@
+Group=@SERVICE_GROUP@
+WorkingDirectory=@INSTALL_DIR@
+Environment=PYTHONUNBUFFERED=1
+ExecStart=@VENV_DIR@/bin/dfly-dashboard
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

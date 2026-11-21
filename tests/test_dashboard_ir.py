@@ -2,8 +2,10 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
-from dragonfly.dashboard.app import app
-from dragonfly.hub.config import CameraConfig
+from dragonfly.common.config import CameraConfig
+from dragonfly.services.dfly_dashboard import app as dashboard_module
+
+app = dashboard_module.app
 
 
 def test_camera_ir_status_and_cycle_are_scoped_to_live_config(monkeypatch):
@@ -26,7 +28,12 @@ def test_camera_ir_status_and_cycle_are_scoped_to_live_config(monkeypatch):
         )
     ])
     monkeypatch.setitem(app.state._state, "camera_config_loader", lambda: config)
-    monkeypatch.setitem(app.state._state, "camera_ir_controllers", {"OW": FakeController()})
+    async def device_request(_request, method, _path):
+        if method == "GET":
+            return {"mode": "Off", "available_modes": ["Auto", "Off"], "next_mode": "Auto"}
+        return {"mode": "Auto", "available_modes": ["Auto", "Off"], "next_mode": "Off"}
+
+    monkeypatch.setattr(dashboard_module, "_device_request", device_request)
 
     with TestClient(app) as client:
         dashboard = client.get("/").text
@@ -60,8 +67,10 @@ def test_ir_opt_in_is_reloaded_without_restarting_portal(monkeypatch):
         CameraConfig(id="OW", name="Outdoor West", rtsp_url="rtsp://admin:secret@camera.local/main")
     ])]
     monkeypatch.setitem(app.state._state, "camera_config_loader", lambda: config[0])
-    monkeypatch.setitem(app.state._state, "camera_ir_controllers", {})
-    monkeypatch.setattr("dragonfly.dashboard.app.ReolinkIrController", lambda _url: FakeController())
+    async def device_request(_request, _method, _path):
+        return {"mode": "Off", "available_modes": ["Auto", "Off"], "next_mode": "Auto"}
+
+    monkeypatch.setattr(dashboard_module, "_device_request", device_request)
 
     with TestClient(app) as client:
         assert client.get("/api/cameras/OW/ir").status_code == 404

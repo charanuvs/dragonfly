@@ -1,6 +1,6 @@
 import pytest
 
-from dragonfly.modules.camera.rtsp_camera import parse_rtsp_target
+from dragonfly.common.rtsp_camera import parse_rtsp_target
 
 
 def test_parse_rtsp_target_default_port():

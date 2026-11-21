@@ -7,7 +7,7 @@ from collections import namedtuple
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from dragonfly.modules.camera.recorder import SegmentedRecorder
+from dragonfly.services.dfly_capture.recorder import SegmentedRecorder
 
 DiskUsage = namedtuple("DiskUsage", ["total", "used", "free"])
 
@@ -52,7 +52,7 @@ def test_watermark_cleanup_deletes_oldest_segments_until_low_watermark(tmp_path)
         remaining = sum(1 for _ in recorder.root.rglob("*.mp4"))
         return DiskUsage(total=10, used=remaining, free=10 - remaining)
 
-    with patch("dragonfly.modules.camera.recorder.shutil.disk_usage", side_effect=fake_disk_usage):
+    with patch("dragonfly.services.dfly_capture.recorder.shutil.disk_usage", side_effect=fake_disk_usage):
         recorder._watermark_cleanup()
 
     remaining = sorted(recorder.root.rglob("*.mp4"), key=lambda p: int(p.stem))
@@ -74,7 +74,7 @@ def test_watermark_cleanup_never_deletes_an_active_segment(tmp_path):
         remaining = sum(1 for _ in recorder.root.rglob("*.mp4"))
         return DiskUsage(total=10, used=remaining * 5, free=10 - remaining * 5)
 
-    with patch("dragonfly.modules.camera.recorder.shutil.disk_usage", side_effect=fake_disk_usage):
+    with patch("dragonfly.services.dfly_capture.recorder.shutil.disk_usage", side_effect=fake_disk_usage):
         recorder._watermark_cleanup()
 
     assert oldest.exists()  # never deleted despite being the oldest

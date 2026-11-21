@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from dragonfly.modules.camera.recorder import SegmentedRecorder
+from dragonfly.services.dfly_capture.recorder import SegmentedRecorder
 
 
 def _make_recorder(tmp_path, bus, **kwargs) -> SegmentedRecorder:
@@ -52,8 +52,8 @@ def test_start_does_not_precreate_root_directory(tmp_path):
     fake_bus = MagicMock()
     recorder = _make_recorder(tmp_path, fake_bus)
 
-    with patch("dragonfly.modules.camera.recorder.shutil.which", return_value="/usr/bin/ffmpeg"), \
-         patch("dragonfly.modules.camera.recorder.threading.Thread") as mock_thread, \
+    with patch("dragonfly.services.dfly_capture.recorder.shutil.which", return_value="/usr/bin/ffmpeg"), \
+         patch("dragonfly.services.dfly_capture.recorder.threading.Thread") as mock_thread, \
          patch.object(Path, "mkdir", side_effect=AssertionError("start() must not create directories itself")):
         recorder.start()  # must not raise
 
@@ -64,7 +64,7 @@ def test_launch_segment_skips_write_when_mount_point_not_mounted(tmp_path):
     fake_bus = MagicMock()
     recorder = _make_recorder(tmp_path, fake_bus, mount_point="/mnt/dragonfly-hdd")
 
-    with patch("dragonfly.modules.camera.recorder.os.path.ismount", return_value=False):
+    with patch("dragonfly.services.dfly_capture.recorder.os.path.ismount", return_value=False):
         recorder._launch_segment(boundary_epoch=0, duration=60)  # must not raise
 
     # Nothing should have been written to disk at all — not even the
@@ -84,8 +84,8 @@ def test_launch_segment_proceeds_when_mount_point_is_mounted(tmp_path):
     fake_bus = MagicMock()
     recorder = _make_recorder(tmp_path, fake_bus, mount_point="/mnt/dragonfly-hdd")
 
-    with patch("dragonfly.modules.camera.recorder.os.path.ismount", return_value=True), \
-         patch("dragonfly.modules.camera.recorder.subprocess.Popen") as mock_popen:
+    with patch("dragonfly.services.dfly_capture.recorder.os.path.ismount", return_value=True), \
+         patch("dragonfly.services.dfly_capture.recorder.subprocess.Popen") as mock_popen:
         mock_popen.return_value = MagicMock(poll=MagicMock(return_value=None))
         recorder._launch_segment(boundary_epoch=0, duration=60)
 
@@ -106,11 +106,11 @@ def test_check_mount_transition_publishes_once_on_unmount(tmp_path):
     fake_bus = MagicMock()
     recorder = _make_recorder(tmp_path, fake_bus, mount_point="/mnt/dragonfly-hdd")
 
-    with patch("dragonfly.modules.camera.recorder.os.path.ismount", return_value=True):
+    with patch("dragonfly.services.dfly_capture.recorder.os.path.ismount", return_value=True):
         recorder._check_mount_transition()
     assert not fake_bus.publish.called  # still mounted — nothing to report
 
-    with patch("dragonfly.modules.camera.recorder.os.path.ismount", return_value=False):
+    with patch("dragonfly.services.dfly_capture.recorder.os.path.ismount", return_value=False):
         recorder._check_mount_transition()  # transition: mounted -> unmounted
         recorder._check_mount_transition()  # still unmounted — must not re-publish
         recorder._check_mount_transition()
@@ -127,11 +127,11 @@ def test_check_mount_transition_republishes_after_remount_then_unmount_again(tmp
     fake_bus = MagicMock()
     recorder = _make_recorder(tmp_path, fake_bus, mount_point="/mnt/dragonfly-hdd")
 
-    with patch("dragonfly.modules.camera.recorder.os.path.ismount", return_value=False):
+    with patch("dragonfly.services.dfly_capture.recorder.os.path.ismount", return_value=False):
         recorder._check_mount_transition()
-    with patch("dragonfly.modules.camera.recorder.os.path.ismount", return_value=True):
+    with patch("dragonfly.services.dfly_capture.recorder.os.path.ismount", return_value=True):
         recorder._check_mount_transition()  # remounted — no publish needed here
-    with patch("dragonfly.modules.camera.recorder.os.path.ismount", return_value=False):
+    with patch("dragonfly.services.dfly_capture.recorder.os.path.ismount", return_value=False):
         recorder._check_mount_transition()  # unmounted again — a new transition
 
     assert fake_bus.publish.call_count == 2
@@ -141,7 +141,7 @@ def test_check_mount_transition_noop_when_mount_point_not_configured(tmp_path):
     fake_bus = MagicMock()
     recorder = _make_recorder(tmp_path, fake_bus, mount_point=None)
 
-    with patch("dragonfly.modules.camera.recorder.os.path.ismount", return_value=False):
+    with patch("dragonfly.services.dfly_capture.recorder.os.path.ismount", return_value=False):
         recorder._check_mount_transition()
 
     assert not fake_bus.publish.called

@@ -1,0 +1,1 @@
+"""Shared configuration, messaging, and domain primitives."""

@@ -1,0 +1,1 @@
+"""Dashboard UI and read-only state presentation service."""

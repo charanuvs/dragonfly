@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the Dragonfly mount watchdog periodically
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+Unit=dfly-mount-watchdog.service
+
+[Install]
+WantedBy=timers.target

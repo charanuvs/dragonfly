@@ -1,0 +1,8 @@
+[Unit]
+Description=Dragonfly recordings-drive mount watchdog (clears dead mounts)
+Documentation=https://github.com/charanuvs/dragonfly
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/sbin/dragonfly-mount-repair

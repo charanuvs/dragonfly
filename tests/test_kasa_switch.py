@@ -3,7 +3,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from dragonfly.hub.kasa_switch import next_auto_off
+from dragonfly.services.dfly_devices.kasa_switch import next_auto_off
 
 
 def test_next_auto_off_uses_noon_and_midnight_pacific():
