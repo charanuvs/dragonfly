@@ -24,6 +24,7 @@ dashboard:
 kasa_switch:
   host: 192.168.1.50
   name: "Kasa light"
+  device_id: "AA:BB:CC:DD:EE:FF"  # stable Kasa ID/MAC used by on-demand rescan
   timezone: America/Los_Angeles
   gpio_pin: 17
 
@@ -66,3 +67,15 @@ cameras: []
 #     overlap_seconds: 10
 #     high_watermark_pct: 90
 #     low_watermark_pct: 80
+
+# Android tablet stream (enable only after installing Dragonfly Camera and
+# replacing the example Tailscale address with the tablet's current RTSP URL):
+#   - id: android_tablet
+#     name: "Android Tablet"
+#     rtsp_url: "rtsp://100.x.y.z:8554/"
+#     control_url: "http://100.x.y.z:8555"
+#     live_timestamp: true
+#     record: false
+#     motion_events: false
+#     poll_interval_s: 15
+#     timeout_s: 3

@@ -14,21 +14,51 @@ from kasa import (
     DeviceConnectionParameters,
     DeviceEncryptionType,
     DeviceFamily,
+    Discover,
 )
 
 log = logging.getLogger(__name__)
 
 
 class KasaSwitchController:
-    def __init__(self, host: str, name: str) -> None:
+    def __init__(self, host: str, name: str, device_id: str | None = None) -> None:
         self.host = host
         self.name = name
+        self.device_id = self._normalize_device_id(device_id)
         self._lock = asyncio.Lock()
         self._connection_type = DeviceConnectionParameters(
             device_family=DeviceFamily.IotSmartPlugSwitch,
             encryption_type=DeviceEncryptionType.Klap,
             login_version=2,
         )
+
+    @staticmethod
+    def _normalize_device_id(device_id: str | None) -> str | None:
+        if device_id is None:
+            return None
+        return "".join(character for character in device_id.lower() if character.isalnum())
+
+    async def rescan(self) -> str:
+        if self.device_id is None:
+            raise ValueError("Kasa rescan requires a configured device MAC")
+
+        async with self._lock:
+            devices = await Discover.discover(discovery_timeout=5)
+            try:
+                matches = [
+                    (host, device)
+                    for host, device in devices.items()
+                    if self._normalize_device_id(
+                        getattr(device, "device_id", None) or getattr(device, "mac", None)
+                    ) == self.device_id
+                ]
+                if len(matches) != 1:
+                    raise LookupError("Configured Kasa switch was not uniquely discovered")
+                self.host = matches[0][0]
+                return self.host
+            finally:
+                for device in devices.values():
+                    await device.disconnect()
 
     async def _apply(self, target: bool | None, *, toggle: bool = False) -> bool:
         async with self._lock:

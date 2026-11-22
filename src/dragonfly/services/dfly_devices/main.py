@@ -18,6 +18,7 @@ def run() -> None:
         KasaSwitchController(
             config.kasa_switch.host,
             config.kasa_switch.name,
+            config.kasa_switch.device_id,
         )
         if config.kasa_switch
         else None

@@ -118,6 +118,30 @@ async def toggle_switch(request: Request) -> dict:
         raise HTTPException(status_code=503, detail="Switch unavailable") from exc
 
 
+@app.post("/switch/rescan")
+async def rescan_switch(request: Request) -> dict:
+    controller = request.app.state.kasa_switch_controller
+    if controller is None:
+        raise HTTPException(status_code=404, detail="Switch not configured")
+    if controller.device_id is None:
+        raise HTTPException(status_code=409, detail="Kasa device ID is not configured")
+    try:
+        host = await controller.rescan()
+        switch_config = request.app.state.kasa_switch_config
+        return {
+            "name": controller.name,
+            "host": host,
+            "on": await controller.get_state(),
+            "timezone": switch_config.timezone if switch_config else "America/Los_Angeles",
+        }
+    except LookupError as exc:
+        log.info("Configured Kasa switch %s was not found during rescan", controller.name)
+        raise HTTPException(status_code=404, detail="Configured Kasa switch not found") from exc
+    except Exception as exc:
+        log.warning("Could not rescan Kasa switch %s: %s", controller.name, exc)
+        raise HTTPException(status_code=503, detail="Kasa rescan failed") from exc
+
+
 def _camera_ir_controller(request: Request, camera_id: str) -> ReolinkIrController | None:
     config = request.app.state.camera_config_loader()
     camera = next(

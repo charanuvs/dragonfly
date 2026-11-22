@@ -18,7 +18,10 @@ def run() -> None:
     config = load_config()
     bus = EventBus(host=config.mqtt.host, port=config.mqtt.port)
 
-    live_manager = LiveStreamManager({cam.id: cam.rtsp_url for cam in config.cameras})
+    live_manager = LiveStreamManager(
+        {cam.id: cam.rtsp_url for cam in config.cameras},
+        timestamp_cameras={cam.id for cam in config.cameras if cam.live_timestamp},
+    )
 
     def on_event(topic: str, _payload: bytes) -> None:
         # dragonfly/<module_id>/<subtopic> — the only inbound command capture

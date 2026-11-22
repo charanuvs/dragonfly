@@ -29,3 +29,8 @@ recordings/
 .DS_Store
 .idea/
 .vscode/
+.gradle/
+local.properties
+**/.gradle/
+**/local.properties
+**/build/

@@ -24,3 +24,16 @@ def test_system_stats_handle_unavailable_io_counters(tmp_path):
     assert stats["disk_write_bytes"] is None
     assert stats["network_received_bytes"] is None
     assert stats["network_sent_bytes"] is None
+
+
+def test_system_stats_include_cpu_temperature(tmp_path):
+    temperatures = {"cpu_thermal": [SimpleNamespace(current=60.686)]}
+    with patch("dragonfly.common.sysinfo.psutil.sensors_temperatures", return_value=temperatures, create=True):
+        stats = get_system_stats(str(tmp_path))
+    assert stats["cpu_temp_c"] == 60.686
+
+
+def test_system_stats_handle_unavailable_cpu_temperature(tmp_path):
+    with patch("dragonfly.common.sysinfo.psutil.sensors_temperatures", side_effect=OSError(), create=True):
+        stats = get_system_stats(str(tmp_path))
+    assert stats["cpu_temp_c"] is None

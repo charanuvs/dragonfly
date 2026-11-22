@@ -62,6 +62,9 @@ _PSEUDO_MODULE_NAMES = {
   "_mqtt": "MQTT broker",
     "_storage": "Recordings storage",
 }
+TABLET_STREAMER_APK = Path(__file__).resolve().parents[4] / "downloads" / "DragonflyCamera.apk"
+
+
 async def _device_request(request: Request, method: str, path: str) -> dict:
   try:
     async with httpx.AsyncClient(base_url=request.app.state.device_api_url, timeout=8) as client:
@@ -83,6 +86,17 @@ async def _device_request(request: Request, method: str, path: str) -> dict:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/downloads/DragonflyCamera.apk")
+def download_tablet_streamer() -> FileResponse:
+  if not TABLET_STREAMER_APK.is_file():
+    raise HTTPException(status_code=404, detail="Tablet streamer APK not installed")
+  return FileResponse(
+    TABLET_STREAMER_APK,
+    media_type="application/vnd.android.package-archive",
+    filename="DragonflyCamera.apk",
+  )
 
 
 @app.get("/api/modules")
@@ -139,6 +153,7 @@ async def list_modules(request: Request) -> list[dict]:
                     else None
                 ),
                 "ir_control": bool(meta.ir_control) if meta else False,
+                "camera_control": bool(meta.control_url) if meta else False,
                 "details": status.details,
             }
         )
@@ -175,7 +190,7 @@ async def list_modules(request: Request) -> list[dict]:
 
 @app.get("/api/system")
 def system_stats(request: Request) -> dict:
-  return get_system_stats(request.app.state.storage_path)
+  return get_system_stats("/")
 
 
 @app.get("/api/switch")
@@ -190,6 +205,16 @@ async def toggle_switch(request: Request) -> dict:
     if request.app.state.kasa_switch_config is None:
         raise HTTPException(status_code=404, detail="Switch not configured")
     return await _device_request(request, "POST", "/switch/toggle")
+
+
+@app.post("/api/switch/rescan")
+async def rescan_switch(request: Request) -> dict:
+    switch_config = request.app.state.kasa_switch_config
+    if switch_config is None:
+        raise HTTPException(status_code=404, detail="Switch not configured")
+    if switch_config.device_id is None:
+        raise HTTPException(status_code=409, detail="Kasa device ID is not configured")
+    return await _device_request(request, "POST", "/switch/rescan")
 
 
 def _refresh_camera_config(request: Request) -> None:
@@ -216,6 +241,47 @@ async def cycle_camera_ir(camera_id: str, request: Request) -> dict:
     if _camera_ir_controller(request, camera_id) is None:
       raise HTTPException(status_code=404, detail="IR control not configured")
     return await _device_request(request, "POST", f"/cameras/{camera_id}/ir/cycle")
+
+
+def _camera_control_url(request: Request, camera_id: str) -> str:
+  camera = request.app.state.camera_config.get(camera_id)
+  if camera is None or not camera.control_url:
+    raise HTTPException(status_code=404, detail="Camera control not configured")
+  return camera.control_url
+
+
+async def _tablet_request(control_url: str, method: str, path: str) -> dict:
+  try:
+    async with httpx.AsyncClient(base_url=control_url, timeout=5) as client:
+      response = await client.request(method, path)
+  except httpx.RequestError as exc:
+    raise HTTPException(status_code=503, detail="Tablet camera unavailable") from exc
+  try:
+    result = response.json()
+  except ValueError:
+    result = {}
+  if not response.is_success:
+    raise HTTPException(
+      status_code=response.status_code,
+      detail=result.get("detail", "Tablet camera request failed"),
+    )
+  return result
+
+
+@app.get("/api/cameras/{camera_id}/camera")
+async def camera_status(camera_id: str, request: Request) -> dict:
+  _refresh_camera_config(request)
+  control_url = _camera_control_url(request, camera_id)
+  return await _tablet_request(control_url, "GET", "/status")
+
+
+@app.post("/api/cameras/{camera_id}/camera/{facing}")
+async def set_camera_facing(camera_id: str, facing: str, request: Request) -> dict:
+  _refresh_camera_config(request)
+  control_url = _camera_control_url(request, camera_id)
+  if facing.lower() not in {"front", "back"}:
+    raise HTTPException(status_code=400, detail="Facing must be front or back")
+  return await _tablet_request(control_url, "POST", f"/camera/{facing.lower()}")
 
 
 def _recording_path(request: Request, path: str) -> Path:
@@ -430,9 +496,17 @@ _INDEX_HTML = """<!doctype html>
     .switch-card button:hover:not(:disabled) { background: var(--green); }
     .switch-card button:focus-visible { outline: 3px solid var(--yellow); outline-offset: 3px; }
     .switch-card button:disabled { opacity: .55; cursor: not-allowed; }
+    .switch-card .switch-rescan { min-height: 36px; border-color: var(--line); background: transparent; color: var(--ink); font-size: .75rem; }
+    .switch-card .switch-rescan:hover:not(:disabled) { background: #e0eee2; }
     .switch-error { grid-column: 1 / -1; color: var(--red); }
+    .switch-rescan-status { grid-column: 1 / -1; }
     .camera-ir-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1rem; align-items: start; }
     .camera-card-content { min-width: 0; }
+    .camera-control { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin-top: .75rem; }
+    .camera-facing { min-height: 36px; border: 1px solid var(--ink); background: transparent; color: var(--ink); padding: .35rem .7rem; font: 600 .8rem 'Space Grotesk', sans-serif; cursor: pointer; }
+    .camera-facing.selected { background: var(--ink); color: #f4f6ee; }
+    .camera-facing:disabled { opacity: .5; cursor: not-allowed; }
+    .camera-facing:focus-visible { outline: 3px solid var(--yellow); outline-offset: 2px; }
     .ir-control { grid-column: 2; grid-row: 1; display: flex; min-width: 56px; flex-direction: column; align-items: center; gap: .35rem; margin-top: .1rem; }
     .ir-label { color: var(--muted); font: 500 .65rem 'DM Mono', monospace; text-transform: uppercase; }
     .ir-switch { position: relative; display: block; width: 52px; height: 30px; cursor: pointer; }
@@ -553,7 +627,7 @@ _INDEX_HTML = """<!doctype html>
       <tbody id="service-rows"><tr><td colspan="4" class="service-empty">Loading services...</td></tr></tbody>
     </table>
   </div>
-  <div class="section-heading"><h2>Devices</h2><span class="section-kicker">Live status &middot; <a href="/devices">Open device page</a></span></div>
+  <div class="section-heading"><h2>Devices</h2><span class="section-kicker">Live status &middot; <a href="/devices">Open device page</a> &middot; <a href="/downloads/DragonflyCamera.apk">Tablet camera APK</a></span></div>
   <div id="grid" class="grid device-grid">
     <div id="switch-card" class="card switch-card">
       <div>
@@ -563,8 +637,10 @@ _INDEX_HTML = """<!doctype html>
       </div>
       <div class="switch-actions">
         <button id="switch-toggle" type="button" disabled>Loading</button>
+        <button id="switch-rescan" class="switch-rescan" type="button" disabled>Rescan</button>
       </div>
       <div id="switch-error" class="meta switch-error" aria-live="polite"></div>
+      <div id="switch-rescan-status" class="meta switch-rescan-status" aria-live="polite"></div>
     </div>
     <div id="physical-grid" class="physical-grid"><p class="empty">Loading...</p></div>
   </div>
@@ -629,6 +705,7 @@ _INDEX_HTML = """<!doctype html>
       document.getElementById('sysbar').innerHTML =
         `<span><b>${s.hostname}</b></span>` +
         `<span>CPU <b>${s.cpu_percent.toFixed(0)}%</b> (${s.cpu_count} cores)</span>` +
+        `<span>Core temp <b>${s.cpu_temp_c == null ? 'unavailable' : `${s.cpu_temp_c.toFixed(1)} °C`}</b></span>` +
         `<span>Mem <b>${mb(s.mem_used)}/${mb(s.mem_total)} MB</b> (${s.mem_percent.toFixed(0)}%)</span>` +
         `<span>${disk}</span>` +
         `<span>up ${formatUptime(s.uptime_s)}</span>`;
@@ -749,6 +826,13 @@ _INDEX_HTML = """<!doctype html>
     }
 
     function renderModuleCard(m) {
+      const cameraControl = m.camera_control
+        ? `<div class="camera-control" data-camera-control-status="${escapeHtml(m.module_id)}" role="group" aria-label="Camera facing">
+            <button type="button" class="camera-facing" data-camera-facing="front" data-camera-id="${escapeHtml(m.module_id)}" aria-pressed="false" disabled>Front</button>
+            <button type="button" class="camera-facing" data-camera-facing="back" data-camera-id="${escapeHtml(m.module_id)}" aria-pressed="false" disabled>Back</button>
+            <span class="meta camera-facing-status" aria-live="polite">Checking</span>
+          </div>`
+        : '';
       return `
         <div class="card${m.ir_control ? ' camera-ir-card' : ''}">
           <div class="camera-card-content">
@@ -778,6 +862,7 @@ _INDEX_HTML = """<!doctype html>
             ? `<div class="meta"><a href="/live/${encodeURIComponent(m.module_id)}">Live view &rarr;</a></div>` : ''}
           ${m.module_type.includes('camera') && m.module_id.charAt(0) !== '_'
             ? `<div class="meta"><a href="/recordings?path=${encodeURIComponent(m.module_id)}">Browse recordings &rarr;</a></div>` : ''}
+          ${cameraControl}
           </div>
           ${m.ir_control ? `<div class="ir-control" role="group" aria-label="Infrared mode">
             <span class="ir-label">IR</span>
@@ -829,9 +914,52 @@ _INDEX_HTML = """<!doctype html>
         if (irStates.has(m.module_id)) renderCameraIr(m.module_id, irStates.get(m.module_id));
         else refreshCameraIr(m.module_id);
       });
+      devices.filter(m => m.camera_control).forEach(m => refreshCameraFacing(m.module_id));
     }
     refresh();
     setInterval(refresh, 5000);
+
+    async function refreshCameraFacing(cameraId) {
+      const control = document.querySelector(`[data-camera-id="${CSS.escape(cameraId)}"]`)?.closest('.camera-control');
+      if (!control) return;
+      const status = control.querySelector('.camera-facing-status');
+      try {
+        const response = await fetch(`/api/cameras/${encodeURIComponent(cameraId)}/camera`, { cache: 'no-store' });
+        if (!response.ok) throw new Error('Unavailable');
+        const state = await response.json();
+        const facing = String(state.camera || '').toLowerCase();
+        status.textContent = facing ? `Camera: ${facing[0].toUpperCase() + facing.slice(1)}` : 'Unavailable';
+        control.querySelectorAll('.camera-facing').forEach(button => {
+          const selected = button.dataset.cameraFacing === facing;
+          button.disabled = !state.streaming;
+          button.classList.toggle('selected', selected);
+          button.setAttribute('aria-pressed', String(selected));
+        });
+      } catch (_error) {
+        status.textContent = 'Unavailable';
+        control.querySelectorAll('.camera-facing').forEach(button => { button.disabled = true; });
+      }
+    }
+
+    document.addEventListener('click', async event => {
+      const button = event.target.closest('.camera-facing');
+      if (!button) return;
+      const cameraId = button.dataset.cameraId;
+      const facing = button.dataset.cameraFacing;
+      button.disabled = true;
+      try {
+        const response = await fetch(`/api/cameras/${encodeURIComponent(cameraId)}/camera/${encodeURIComponent(facing)}`, { method: 'POST' });
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ detail: 'Camera switch failed' }));
+          throw new Error(error.detail || 'Camera switch failed');
+        }
+        await refreshCameraFacing(cameraId);
+      } catch (error) {
+        const control = button.closest('.camera-control');
+        if (control) control.querySelector('.camera-facing-status').textContent = error.message || 'Camera switch failed';
+        button.disabled = false;
+      }
+    });
 
     const irStates = new Map();
     const irBusy = new Set();
@@ -884,9 +1012,13 @@ _INDEX_HTML = """<!doctype html>
     const switchDot = document.getElementById('switch-dot');
     const switchSchedule = document.getElementById('switch-schedule');
     const switchToggle = document.getElementById('switch-toggle');
+    const switchRescan = document.getElementById('switch-rescan');
     const switchError = document.getElementById('switch-error');
+    const switchRescanStatus = document.getElementById('switch-rescan-status');
     let switchBusy = false;
     let switchAvailable = false;
+    let switchConfigured = true;
+    let rescanBusy = false;
 
     function renderSwitch(state) {
       switchAvailable = true;
@@ -897,6 +1029,7 @@ _INDEX_HTML = """<!doctype html>
       switchSchedule.textContent = `Daily auto-off at 12:00 AM and 12:00 PM (${state.timezone}).`;
       switchToggle.textContent = state.on ? 'Turn off' : 'Turn on';
       switchToggle.disabled = switchBusy;
+      switchRescan.disabled = rescanBusy;
       switchError.textContent = '';
     }
 
@@ -938,6 +1071,26 @@ _INDEX_HTML = """<!doctype html>
         switchToggle.disabled = !switchAvailable;
       }
     });
+    switchRescan.addEventListener('click', async () => {
+      if (rescanBusy || !switchConfigured) return;
+      rescanBusy = true;
+      switchRescan.disabled = true;
+      switchRescanStatus.textContent = 'Scanning local Kasa devices...';
+      try {
+        const response = await fetch('/api/switch/rescan', { method: 'POST' });
+        if (response.status === 404) throw new Error('Configured switch not found.');
+        if (response.status === 409) throw new Error('Switch identity is not configured.');
+        if (!response.ok) throw new Error('Rescan failed.');
+        const state = await response.json();
+        renderSwitch(state);
+        switchRescanStatus.textContent = `Found ${state.name} at ${state.host}.`;
+      } catch (error) {
+        switchRescanStatus.textContent = error.message || 'Rescan failed.';
+      } finally {
+        rescanBusy = false;
+        switchRescan.disabled = !switchConfigured;
+      }
+    });
     refreshSwitch();
     setInterval(refreshSwitch, 1000);
   </script>
@@ -958,10 +1111,17 @@ _DEVICES_HTML = """<!doctype html>
   <style>
     :root {
       --ink: #202c29; --muted: #64716c; --paper: #f7f8f4;
+        if (response.status === 404) {
+          switchConfigured = false;
+          switchCard.hidden = true;
+          return;
+        }
       --line: #aab4ae; --green: #2a7764; --red: #c84b38;
+        switchConfigured = true;
     }
     * { box-sizing: border-box; }
     body {
+        switchConfigured = true;
       font-family: 'Space Grotesk', sans-serif;
       background: repeating-linear-gradient(0deg, #e7ebe8, #e7ebe8 3px, #e3e8e4 3px, #e3e8e4 4px);
       color: var(--ink); margin: 0;
@@ -992,6 +1152,9 @@ _DEVICES_HTML = """<!doctype html>
     button:focus-visible { outline: 3px solid #e7bd53; outline-offset: 3px; }
     button:disabled { opacity: .55; cursor: not-allowed; }
     .switch-actions { display: grid; gap: .5rem; }
+    .switch-card .switch-rescan { min-height: 36px; border-color: var(--line); background: transparent; color: var(--ink); font-size: .75rem; }
+    .switch-card .switch-rescan:hover:not(:disabled) { background: #e0eee2; }
+    .switch-rescan-status { grid-column: 1 / -1; }
     .camera-ir-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1rem; align-items: start; }
     .camera-card-content { min-width: 0; }
     .ir-control { grid-column: 2; grid-row: 1; display: flex; min-width: 56px; flex-direction: column; align-items: center; gap: .35rem; margin-top: .1rem; }
@@ -1032,8 +1195,10 @@ _DEVICES_HTML = """<!doctype html>
         </div>
         <div class="switch-actions">
           <button id="switch-toggle" type="button" disabled>Loading</button>
+          <button id="switch-rescan" class="switch-rescan" type="button" disabled>Rescan</button>
         </div>
         <div id="switch-error" class="meta error" aria-live="polite"></div>
+        <div id="switch-rescan-status" class="meta switch-rescan-status" aria-live="polite"></div>
       </article>
       <div id="physical-grid" style="display:contents"><p class="empty">Loading devices...</p></div>
     </div>
@@ -1045,10 +1210,14 @@ _DEVICES_HTML = """<!doctype html>
     const switchDot = document.querySelector('#switch-dot');
     const switchSchedule = document.querySelector('#switch-schedule');
     const switchToggle = document.querySelector('#switch-toggle');
+    const switchRescan = document.querySelector('#switch-rescan');
     const switchError = document.querySelector('#switch-error');
+    const switchRescanStatus = document.querySelector('#switch-rescan-status');
     const physicalGrid = document.querySelector('#physical-grid');
     let switchBusy = false;
     let switchAvailable = false;
+    let switchConfigured = true;
+    let rescanBusy = false;
 
     function escapeHtml(value) {
       return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -1063,6 +1232,7 @@ _DEVICES_HTML = """<!doctype html>
       switchSchedule.textContent = `Daily auto-off at 12:00 AM and 12:00 PM (${state.timezone}).`;
       switchToggle.textContent = state.on ? 'Turn off' : 'Turn on';
       switchToggle.disabled = switchBusy;
+      switchRescan.disabled = rescanBusy;
       switchError.textContent = '';
     }
 
@@ -1070,17 +1240,21 @@ _DEVICES_HTML = """<!doctype html>
       try {
         const response = await fetch('/api/switch', { cache: 'no-store' });
         if (response.status === 404) {
+          switchConfigured = false;
           switchCard.hidden = true;
           return;
         }
         if (!response.ok) throw new Error('Switch unavailable');
+        switchConfigured = true;
         renderSwitch(await response.json());
       } catch {
         switchAvailable = false;
+        switchConfigured = true;
         switchState.textContent = 'UNAVAILABLE';
         switchDot.className = 'dot offline';
         switchToggle.textContent = 'Unavailable';
         switchToggle.disabled = true;
+        switchRescan.disabled = rescanBusy;
         switchError.textContent = 'Could not read the switch state.';
       }
     }
@@ -1102,6 +1276,27 @@ _DEVICES_HTML = """<!doctype html>
         switchToggle.disabled = !switchAvailable;
       }
     });
+    switchRescan.addEventListener('click', async () => {
+      if (rescanBusy || !switchConfigured) return;
+      rescanBusy = true;
+      switchRescan.disabled = true;
+      switchRescanStatus.textContent = 'Scanning local Kasa devices...';
+      try {
+        const response = await fetch('/api/switch/rescan', { method: 'POST' });
+        if (response.status === 404) throw new Error('Configured switch not found.');
+        if (response.status === 409) throw new Error('Switch identity is not configured.');
+        if (!response.ok) throw new Error('Rescan failed.');
+        const state = await response.json();
+        renderSwitch(state);
+        switchRescanStatus.textContent = `Found ${state.name} at ${state.host}.`;
+      } catch (error) {
+        switchRescanStatus.textContent = error.message || 'Rescan failed.';
+      } finally {
+        rescanBusy = false;
+        switchRescan.disabled = !switchConfigured;
+      }
+    });
+
     async function refreshDevices() {
       try {
         const response = await fetch('/api/modules', { cache: 'no-store' });

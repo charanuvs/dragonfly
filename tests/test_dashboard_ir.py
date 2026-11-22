@@ -85,3 +85,24 @@ def test_ir_opt_in_is_reloaded_without_restarting_portal(monkeypatch):
         response = client.get("/api/cameras/OW/ir")
         assert response.status_code == 200
         assert response.json()["mode"] == "Off"
+
+
+def test_tablet_camera_control_uses_configured_proxy(monkeypatch):
+    config = SimpleNamespace(cameras=[
+        CameraConfig(id="tablet", name="Tablet", rtsp_url="rtsp://tablet/", control_url="http://tablet:8555")
+    ])
+    monkeypatch.setitem(app.state._state, "camera_config_loader", lambda: config)
+    calls = []
+
+    async def tablet_request(url, method, path):
+        calls.append((url, method, path))
+        return {"camera": "Front", "streaming": True}
+
+    monkeypatch.setattr(dashboard_module, "_tablet_request", tablet_request)
+    with TestClient(app) as client:
+        assert client.get("/api/cameras/tablet/camera").json()["camera"] == "Front"
+        assert client.post("/api/cameras/tablet/camera/back").status_code == 200
+        assert client.post("/api/cameras/tablet/camera/side").status_code == 400
+        assert client.get("/api/cameras/unknown/camera").status_code == 404
+        assert 'aria-pressed="false"' in client.get("/").text
+    assert calls == [("http://tablet:8555", "GET", "/status"), ("http://tablet:8555", "POST", "/camera/back")]

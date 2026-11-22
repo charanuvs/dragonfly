@@ -2,6 +2,16 @@
     auto_https disable_redirects
 }
 
+http://phila.int {
+    bind 100.72.242.83
+    redir https://phila.int{uri} 308
+}
+
+http://video.phila.int {
+    bind 100.72.242.83
+    redir https://video.phila.int{uri} 308
+}
+
 https://phila.int {
     bind 100.72.242.83
     tls /etc/caddy/tls/phila-services-int.crt /etc/caddy/tls/phila-services.key

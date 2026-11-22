@@ -40,6 +40,7 @@ class DashboardConfig(BaseModel):
 class KasaSwitchConfig(BaseModel):
     host: str
     name: str = "Bedroom light"
+    device_id: str | None = None
     timezone: str = "America/Los_Angeles"
     gpio_pin: int = 17
 
@@ -47,6 +48,8 @@ class CameraConfig(BaseModel):
     id: str
     name: str
     rtsp_url: str  # keep this only in config/dragonfly.yaml (gitignored) — it carries credentials
+    control_url: str | None = None
+    live_timestamp: bool = False
     ir_control: bool = False
     motion_events: bool = False
     poll_interval_s: float = 15.0

@@ -20,10 +20,21 @@ psutil.cpu_percent(interval=None)
 
 def get_system_stats(disk_path: str) -> dict:
     mem = psutil.virtual_memory()
+    cpu_temp = None
+    try:
+        temperatures = psutil.sensors_temperatures()
+        for sensor in ("cpu_thermal", "coretemp", "k10temp"):
+            readings = temperatures.get(sensor, [])
+            if readings:
+                cpu_temp = readings[0].current
+                break
+    except (AttributeError, OSError, RuntimeError, NotImplementedError, psutil.Error):
+        pass
     stats = {
         "hostname": socket.gethostname(),
         "cpu_percent": psutil.cpu_percent(interval=None),
         "cpu_count": psutil.cpu_count(),
+        "cpu_temp_c": cpu_temp,
         "mem_total": mem.total,
         "mem_used": mem.total - mem.available,
         "mem_percent": mem.percent,

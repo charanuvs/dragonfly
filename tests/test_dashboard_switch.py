@@ -10,15 +10,24 @@ app = dashboard_module.app
 
 
 class FakeSwitchController:
-    def __init__(self):
+    def __init__(self, *, device_id="20:e1:5d:1c:cb:b5", scan_error=None):
         self.name = "Bedroom light"
         self.host = "192.168.68.53"
+        self.device_id = device_id
+        self.scan_error = scan_error
 
     async def get_state(self):
         return True
 
     async def toggle(self):
         return False
+
+    async def rescan(self):
+        if self.scan_error:
+            raise self.scan_error
+        self.host = "192.168.68.50"
+        return self.host
+
 
 def _configure_switch(monkeypatch, controller):
     monkeypatch.setitem(
@@ -27,17 +36,69 @@ def _configure_switch(monkeypatch, controller):
         SimpleNamespace(
             name=controller.name,
             host=controller.host,
+            device_id=getattr(controller, "device_id", "20:e1:5d:1c:cb:b5"),
             timezone="America/Los_Angeles",
             gpio_pin=17,
         ),
     )
 
     async def device_request(_request, method, path):
+        if path == "/switch/rescan":
+            try:
+                host = await controller.rescan()
+            except LookupError as exc:
+                raise HTTPException(404, "Configured Kasa switch not found") from exc
+            return {"name": controller.name, "host": host, "on": True, "timezone": "America/Los_Angeles"}
         if path == "/switch/toggle":
             return {"name": controller.name, "host": controller.host, "on": False, "timezone": "America/Los_Angeles"}
         return {"name": controller.name, "host": controller.host, "on": True, "timezone": "America/Los_Angeles"}
 
     monkeypatch.setattr(dashboard_module, "_device_request", device_request)
+
+
+def test_rescan_route_updates_and_returns_switch_host(monkeypatch):
+    controller = FakeSwitchController()
+    _configure_switch(monkeypatch, controller)
+
+    with TestClient(app) as client:
+        response = client.post("/api/switch/rescan")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "name": "Bedroom light",
+        "host": "192.168.68.50",
+        "on": True,
+        "timezone": "America/Los_Angeles",
+    }
+
+
+def test_rescan_route_requires_a_device_identity(monkeypatch):
+    _configure_switch(monkeypatch, FakeSwitchController(device_id=None))
+
+    with TestClient(app) as client:
+        response = client.post("/api/switch/rescan")
+
+    assert response.status_code == 409
+
+
+def test_rescan_route_reports_missing_device(monkeypatch):
+    _configure_switch(monkeypatch, FakeSwitchController(scan_error=LookupError("not found")))
+
+    with TestClient(app) as client:
+        response = client.post("/api/switch/rescan")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Configured Kasa switch not found"
+
+
+def test_rescan_button_is_present_on_both_portal_views():
+    with TestClient(app) as client:
+        dashboard = client.get("/").text
+        devices = client.get("/devices").text
+
+    for page in (dashboard, devices):
+        assert 'id="switch-rescan"' in page
+        assert "Scanning local Kasa devices..." in page
 
 
 def test_service_health_uses_compact_table_with_alert_column():
@@ -54,6 +115,27 @@ def test_service_health_uses_compact_table_with_alert_column():
     assert "fmtBytes(details.used_bytes)" in page
     assert "fmtBytes(details.total_bytes)" in page
     assert "details.used_pct" in page
+
+
+def test_system_stats_use_host_root_disk(monkeypatch):
+    monkeypatch.setitem(app.state._state, "storage_path", "/recordings")
+    monkeypatch.setattr(dashboard_module, "get_system_stats", lambda path: {"disk_path": path})
+    with TestClient(app) as client:
+        assert client.get("/api/system").json()["disk_path"] == "/"
+
+
+def test_tablet_streamer_download_route_serves_only_configured_apk(tmp_path, monkeypatch):
+    apk = tmp_path / "DragonflyCamera.apk"
+    monkeypatch.setattr(dashboard_module, "TABLET_STREAMER_APK", apk)
+
+    with TestClient(app) as client:
+        assert client.get("/downloads/DragonflyCamera.apk").status_code == 404
+        apk.write_bytes(b"apk-content")
+        response = client.get("/downloads/DragonflyCamera.apk")
+
+    assert response.status_code == 200
+    assert response.content == b"apk-content"
+    assert "DragonflyCamera.apk" in response.headers["content-disposition"]
 
 
 class FakeSwitch:
@@ -102,6 +184,7 @@ def test_switch_status_toggle_and_live_dashboard(monkeypatch):
         assert "<h2>Devices</h2>" in page
         assert page.index("<h2>Services &amp; checks</h2>") < page.index("<h2>Devices</h2>")
         assert "id=\"switch-toggle\"" in page
+        assert 'href="/downloads/DragonflyCamera.apk"' in page
         assert "Daily auto-off at 12:00 AM and 12:00 PM" in page
         assert 'id="switch-card" class="card switch-card"' in page
         assert 'id="physical-grid" class="physical-grid"' in page

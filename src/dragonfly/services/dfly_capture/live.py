@@ -36,9 +36,10 @@ SEGMENT_S = 2
 PLAYLIST_SIZE = 6
 
 class _CameraStream:
-    def __init__(self, rtsp_url: str, out_dir: Path) -> None:
+    def __init__(self, rtsp_url: str, out_dir: Path, timestamp: bool = False) -> None:
         self.rtsp_url = rtsp_url
         self.out_dir = out_dir
+        self.timestamp = timestamp
         self.process: subprocess.Popen | None = None
         self.log_f = None
         self.last_access = time.time()
@@ -48,12 +49,12 @@ class _CameraStream:
 
 
 class LiveStreamManager:
-    def __init__(self, cameras: dict[str, str], base_dir: Path = DEFAULT_LIVE_DIR) -> None:
+    def __init__(self, cameras: dict[str, str], base_dir: Path = DEFAULT_LIVE_DIR, timestamp_cameras: set[str] | None = None) -> None:
         """cameras: {module_id: rtsp_url} — the stream to use for live view."""
         self._base_dir = base_dir
         self._base_dir.mkdir(parents=True, exist_ok=True)
         self._streams = {
-            module_id: _CameraStream(rtsp_url, self._base_dir / module_id)
+            module_id: _CameraStream(rtsp_url, self._base_dir / module_id, module_id in (timestamp_cameras or set()))
             for module_id, rtsp_url in cameras.items()
         }
         self._lock = threading.Lock()
@@ -90,12 +91,23 @@ class LiveStreamManager:
         stream.out_dir.mkdir(parents=True, exist_ok=True)
         for f in stream.out_dir.glob("*"):
             f.unlink(missing_ok=True)
+        video_options = ["-c:v", "copy"]
+        if stream.timestamp:
+            watermark = (
+                "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+                ":text=%{localtime}:x=w-tw-12:y=12:fontsize=24:fontcolor=white"
+                ":borderw=2:bordercolor=black"
+            )
+            video_options = [
+                "-vf", watermark, "-c:v", "libx264", "-preset", "ultrafast",
+                "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-crf", "28", "-b:v", "1200k",
+            ]
         cmd = [
             "ffmpeg", "-nostdin", "-y", "-loglevel", "warning",
             "-rtsp_transport", "tcp", "-timeout", "15000000",
             "-i", stream.rtsp_url,
             "-map", "0:v:0", "-map", "0:a?",
-            "-c:v", "copy",
+            *video_options,
             "-c:a", "aac", "-b:a", "64k",
             "-f", "hls",
             "-hls_time", str(SEGMENT_S),
