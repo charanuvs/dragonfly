@@ -77,10 +77,8 @@ Two ways to close that gap, in increasing order of effort:
 
 Keep it simple to start:
 
-- Main LAN: whatever the Deco already hands out (e.g. `192.168.68.0/24`).
-- IoT network: Deco assigns its own subnet automatically when you enable it
-  (commonly a separate range like `192.168.69.0/24`) — no manual config
-  needed.
+- Main LAN: use the subnet already assigned by the router (for example, `192.168.1.0/24`).
+- IoT network: use the router's separately assigned subnet (for example, `192.168.2.0/24`).
 - Give the hub host a **DHCP reservation** on the main LAN in the Deco app so its
   LAN IP (and therefore the dashboard URL) never changes.
 

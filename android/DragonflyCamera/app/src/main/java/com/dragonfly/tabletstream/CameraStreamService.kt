@@ -32,7 +32,6 @@ class CameraStreamService : Service(), ConnectChecker {
         private const val NOTIFICATION_ID = 1
         private const val PORT = 8554
         private const val CONTROL_PORT = 8555
-        private const val CONTROL_CLIENT = "100.72.242.83"
         private const val WIDTH = 640
         private const val HEIGHT = 480
         private const val VIDEO_BITRATE = 800_000
@@ -94,7 +93,7 @@ class CameraStreamService : Service(), ConnectChecker {
                 while (!server.isClosed) {
                     try {
                         server.accept().use { socket ->
-                            if (socket.inetAddress.hostAddress == CONTROL_CLIENT) {
+                            if (socket.inetAddress.hostAddress == getString(R.string.dragonfly_control_client)) {
                                 socket.soTimeout = 5000
                                 handleControlRequest(socket)
                             }

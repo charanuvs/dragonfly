@@ -13,6 +13,12 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0.0"
+
+        val controlClient = providers.environmentVariable("DRAGONFLY_CONTROL_CLIENT")
+            .orElse(providers.gradleProperty("dragonflyControlClient"))
+            .orElse("")
+            .get()
+        resValue("string", "dragonfly_control_client", controlClient)
     }
 
     buildTypes {

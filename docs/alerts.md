@@ -50,10 +50,14 @@ directly. Restart those units after changing topics or tokens:
 sudo systemctl restart dfly-watchdog dfly-detect
 ```
 
-For phila's checkout, send a test without printing the topic or token:
+For a system checkout, send a test without printing the topic or token:
 
 ```bash
-sudo systemd-run --wait --pipe --collect --property=EnvironmentFile=/etc/dragonfly/alerts.env --property=User=charan --property=WorkingDirectory=/home/charan/dragonfly /home/charan/dragonfly/.venv/bin/python -m dragonfly.common.alerts --test
+sudo systemd-run --wait --pipe --collect \
+  --property=EnvironmentFile=/etc/dragonfly/alerts.env \
+  --property="User=$USER" \
+  --property="WorkingDirectory=$PWD" \
+  "$PWD/.venv/bin/python" -m dragonfly.common.alerts --test
 ```
 
 The test reports whether ntfy accepted the request; check the phone for actual

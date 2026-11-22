@@ -151,7 +151,7 @@ sudo nano /etc/fstab
 #   UUID=<uuid-from-blkid>  /mnt/dragonfly-hdd  ext4  defaults,nofail  0  2
 sudo systemctl daemon-reload   # regenerate the .mount unit from the new fstab
 sudo mount -a                  # mounts it now and validates the fstab line
-sudo chown -R charan:charan /mnt/dragonfly-hdd   # ext4 has real ownership; the
+sudo chown -R <service-user>:<service-group> /mnt/dragonfly-hdd   # the
                                # capture service runs as this user and must be
                                # able to write (vfat used uid/gid/umask mount
                                # options instead — those don't apply to ext4)
